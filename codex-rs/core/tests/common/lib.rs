@@ -6,6 +6,7 @@ use codex_core::CodexConversation;
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::config::ConfigToml;
+use codex_core::features::Feature;
 use regex_lite::Regex;
 
 #[cfg(target_os = "linux")]
@@ -29,12 +30,14 @@ pub fn assert_regex_match<'s>(pattern: &str, actual: &'s str) -> regex_lite::Cap
 /// temporary directory. Using a per-test directory keeps tests hermetic and
 /// avoids clobbering a developer’s real `~/.codex`.
 pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
-    Config::load_from_base_config_with_overrides(
+    let mut config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
         default_test_overrides(),
         codex_home.path().to_path_buf(),
     )
-    .expect("defaults for test should always succeed")
+    .expect("defaults for test should always succeed");
+    config.features.disable(Feature::GhostCommit);
+    config
 }
 
 #[cfg(target_os = "linux")]

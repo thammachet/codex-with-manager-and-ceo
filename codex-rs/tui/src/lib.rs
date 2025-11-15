@@ -7,6 +7,7 @@ use additional_dirs::add_dir_warning_message;
 use app::App;
 pub use app::AppExitInfo;
 use codex_app_server_protocol::AuthMode;
+use codex_common::CliConfigOverrides;
 use codex_core::AuthManager;
 use codex_core::BUILT_IN_OSS_MODEL_PROVIDER_ID;
 use codex_core::CodexAuth;
@@ -19,6 +20,7 @@ use codex_core::find_conversation_path_by_id_str;
 use codex_core::get_platform_sandbox;
 use codex_core::protocol::AskForApproval;
 use codex_ollama::DEFAULT_OSS_MODEL;
+use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::SandboxMode;
 use opentelemetry_appender_tracing::layer::OpenTelemetryTracingBridge;
 use std::fs::OpenOptions;
@@ -143,6 +145,15 @@ pub async fn run_main(
     // canonicalize the cwd
     let cwd = cli.cwd.clone().map(|p| p.canonicalize().unwrap_or(p));
     let additional_dirs = cli.add_dir.clone();
+    let manager_enabled = if cli.manager {
+        Some(true)
+    } else if cli.no_manager {
+        Some(false)
+    } else {
+        None
+    };
+    let manager_reasoning = cli.manager_reasoning.map(ReasoningEffort::from);
+    let worker_reasoning = cli.worker_reasoning.map(ReasoningEffort::from);
 
     let overrides = ConfigOverrides {
         model,
@@ -161,9 +172,14 @@ pub async fn run_main(
         tools_web_search_request: None,
         experimental_sandbox_command_assessment: None,
         additional_writable_roots: additional_dirs,
+        manager_enabled,
+        manager_model: cli.manager_model.clone(),
+        worker_model: cli.worker_model.clone(),
+        manager_reasoning_effort: manager_reasoning,
+        worker_reasoning_effort: worker_reasoning,
     };
     let raw_overrides = cli.config_overrides.raw_overrides.clone();
-    let overrides_cli = codex_common::CliConfigOverrides { raw_overrides };
+    let overrides_cli = CliConfigOverrides { raw_overrides };
     let cli_kv_overrides = match overrides_cli.parse_overrides() {
         Ok(v) => v,
         #[allow(clippy::print_stderr)]

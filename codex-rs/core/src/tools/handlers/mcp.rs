@@ -33,7 +33,7 @@ impl ToolHandler for McpHandler {
             } => (server, tool, raw_arguments),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "mcp handler received unsupported payload".to_string(),
+                    "mcp handler received unsupported payload".into(),
                 ));
             }
         };
@@ -60,15 +60,17 @@ impl ToolHandler for McpHandler {
                     content,
                     content_items,
                     success,
+                    ..
                 } = output;
                 Ok(ToolOutput::Function {
                     content,
                     content_items,
                     success,
+                    history_content: None,
                 })
             }
             _ => Err(FunctionCallError::RespondToModel(
-                "mcp handler received unexpected response variant".to_string(),
+                "mcp handler received unexpected response variant".into(),
             )),
         }
     }

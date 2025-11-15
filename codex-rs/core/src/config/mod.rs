@@ -251,6 +251,9 @@ pub struct Config {
     /// Centralized feature flags; source of truth for feature gating.
     pub features: Features,
 
+    /// Manager/worker orchestration settings.
+    pub manager: ManagerConfig,
+
     /// The active profile name used to derive this `Config` (if any).
     pub active_profile: Option<String>,
 
@@ -631,6 +634,10 @@ pub struct ConfigToml {
     /// Nested tools section for feature toggles
     pub tools: Option<ToolsToml>,
 
+    /// Manager/worker orchestration settings; when omitted the feature is disabled.
+    #[serde(default)]
+    pub manager: Option<ManagerConfigToml>,
+
     /// Centralized feature flags (new). Prefer this over individual toggles.
     #[serde(default)]
     pub features: Option<FeaturesToml>,
@@ -842,6 +849,89 @@ pub struct ConfigOverrides {
     pub experimental_sandbox_command_assessment: Option<bool>,
     /// Additional directories that should be treated as writable roots for this session.
     pub additional_writable_roots: Vec<PathBuf>,
+    pub manager_enabled: Option<bool>,
+    pub manager_model: Option<String>,
+    pub worker_model: Option<String>,
+    pub manager_reasoning_effort: Option<ReasoningEffort>,
+    pub worker_reasoning_effort: Option<ReasoningEffort>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct ManagerConfig {
+    pub enabled: bool,
+    pub manager_model: Option<String>,
+    pub worker_model: Option<String>,
+    pub manager_reasoning_effort: Option<ReasoningEffort>,
+    pub worker_reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl ManagerConfig {
+    fn resolve(
+        toml: Option<&ManagerConfigToml>,
+        overrides: (
+            Option<bool>,
+            Option<String>,
+            Option<String>,
+            Option<ReasoningEffort>,
+            Option<ReasoningEffort>,
+        ),
+    ) -> Self {
+        let (
+            override_enabled,
+            override_manager_model,
+            override_worker_model,
+            override_manager_effort,
+            override_worker_effort,
+        ) = overrides;
+        let mut cfg = ManagerConfig::default();
+        if let Some(toml) = toml {
+            if let Some(enabled) = toml.enabled {
+                cfg.enabled = enabled;
+            }
+            if let Some(model) = toml.manager_model.clone() {
+                cfg.manager_model = Some(model);
+            }
+            if let Some(model) = toml.worker_model.clone() {
+                cfg.worker_model = Some(model);
+            }
+            if let Some(effort) = toml.manager_reasoning_effort {
+                cfg.manager_reasoning_effort = Some(effort);
+            }
+            if let Some(effort) = toml.worker_reasoning_effort {
+                cfg.worker_reasoning_effort = Some(effort);
+            }
+        }
+        if let Some(enabled) = override_enabled {
+            cfg.enabled = enabled;
+        }
+        if let Some(model) = override_manager_model {
+            cfg.manager_model = Some(model);
+        }
+        if let Some(model) = override_worker_model {
+            cfg.worker_model = Some(model);
+        }
+        if let Some(effort) = override_manager_effort {
+            cfg.manager_reasoning_effort = Some(effort);
+        }
+        if let Some(effort) = override_worker_effort {
+            cfg.worker_reasoning_effort = Some(effort);
+        }
+        cfg
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct ManagerConfigToml {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub manager_model: Option<String>,
+    #[serde(default)]
+    pub worker_model: Option<String>,
+    #[serde(default)]
+    pub manager_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub worker_reasoning_effort: Option<ReasoningEffort>,
 }
 
 impl Config {
@@ -872,6 +962,11 @@ impl Config {
             tools_web_search_request: override_tools_web_search_request,
             experimental_sandbox_command_assessment: sandbox_command_assessment_override,
             additional_writable_roots,
+            manager_enabled,
+            manager_model: manager_model_override,
+            worker_model: worker_model_override,
+            manager_reasoning_effort: manager_reasoning_override,
+            worker_reasoning_effort: worker_reasoning_override,
         } = overrides;
 
         let active_profile_name = config_profile_key
@@ -936,6 +1031,16 @@ impl Config {
                 }
             })
             .collect();
+        let manager = ManagerConfig::resolve(
+            cfg.manager.as_ref(),
+            (
+                manager_enabled,
+                manager_model_override,
+                worker_model_override,
+                manager_reasoning_override,
+                worker_reasoning_override,
+            ),
+        );
         let active_project = cfg
             .get_active_project(&resolved_cwd)
             .unwrap_or(ProjectConfig { trust_level: None });
@@ -1165,6 +1270,7 @@ impl Config {
                 .as_ref()
                 .map(|t| t.notifications.clone())
                 .unwrap_or_default(),
+            manager,
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -2898,6 +3004,7 @@ model_verbosity = "high"
                 use_experimental_unified_exec_tool: false,
                 use_experimental_use_rmcp_client: false,
                 features: Features::with_defaults(),
+                manager: ManagerConfig::default(),
                 active_profile: Some("o3".to_string()),
                 active_project: ProjectConfig { trust_level: None },
                 windows_wsl_setup_acknowledged: false,
@@ -2969,6 +3076,7 @@ model_verbosity = "high"
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
+            manager: ManagerConfig::default(),
             active_profile: Some("gpt3".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,
@@ -3055,6 +3163,7 @@ model_verbosity = "high"
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
+            manager: ManagerConfig::default(),
             active_profile: Some("zdr".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,
@@ -3127,6 +3236,7 @@ model_verbosity = "high"
             use_experimental_unified_exec_tool: false,
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
+            manager: ManagerConfig::default(),
             active_profile: Some("gpt5".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,

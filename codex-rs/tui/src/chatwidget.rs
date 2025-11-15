@@ -16,6 +16,8 @@ use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::DelegateWorkerStatusEvent;
+use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::DeprecationNoticeEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
@@ -64,6 +66,7 @@ use tokio::sync::mpsc::UnboundedSender;
 use tracing::debug;
 
 use crate::app_event::AppEvent;
+use crate::app_event::ManagerModelTarget;
 use crate::app_event_sender::AppEventSender;
 use crate::bottom_pane::ApprovalRequest;
 use crate::bottom_pane::BottomPane;
@@ -318,6 +321,20 @@ fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Optio
         None
     } else {
         Some(UserMessage { text, image_paths })
+    }
+}
+
+fn worker_status_label(status: DelegateWorkerStatusKind) -> &'static str {
+    match status {
+        DelegateWorkerStatusKind::Starting => "Starting worker",
+        DelegateWorkerStatusKind::Running => "Worker is thinking",
+        DelegateWorkerStatusKind::RunningCommand => "Running command",
+        DelegateWorkerStatusKind::RunningTool => "Calling tool",
+        DelegateWorkerStatusKind::ApplyingPatch => "Applying patch",
+        DelegateWorkerStatusKind::DiffApplied => "Recording edits",
+        DelegateWorkerStatusKind::Warning => "Worker warning",
+        DelegateWorkerStatusKind::Completed => "Worker completed",
+        DelegateWorkerStatusKind::Failed => "Worker failed",
     }
 }
 
@@ -723,6 +740,20 @@ impl ChatWidget {
 
     fn on_background_event(&mut self, message: String) {
         debug!("BackgroundEvent: {message}");
+    }
+
+    fn on_delegate_worker_status(&mut self, event: DelegateWorkerStatusEvent) {
+        if !self.bottom_pane.is_task_running() {
+            return;
+        }
+        let mut label = event.message.trim().to_string();
+        if label.is_empty() {
+            label = worker_status_label(event.status).to_string();
+        }
+        let truncated = truncate_text(&label, 64);
+        let header = format!("{truncated} · {}", event.worker_id);
+        self.set_status_header(header);
+        self.request_redraw();
     }
 
     fn on_undo_started(&mut self, event: UndoStartedEvent) {
@@ -1258,6 +1289,9 @@ impl ChatWidget {
             SlashCommand::Model => {
                 self.open_model_popup();
             }
+            SlashCommand::Manager => {
+                self.open_manager_settings_popup();
+            }
             SlashCommand::Approvals => {
                 self.open_approvals_popup();
             }
@@ -1558,6 +1592,7 @@ impl ChatWidget {
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 self.on_background_event(message)
             }
+            EventMsg::DelegateWorkerStatus(event) => self.on_delegate_worker_status(event),
             EventMsg::UndoStarted(ev) => self.on_undo_started(ev),
             EventMsg::UndoCompleted(ev) => self.on_undo_completed(ev),
             EventMsg::StreamError(StreamErrorEvent { message }) => self.on_stream_error(message),
@@ -1866,6 +1901,337 @@ impl ChatWidget {
         });
     }
 
+    pub(crate) fn open_manager_settings_popup(&mut self) {
+        let mut items: Vec<SelectionItem> = Vec::new();
+        let manager_enabled = self.config.manager.enabled;
+        let toggle_label = if manager_enabled {
+            "Disable manager mode"
+        } else {
+            "Enable manager mode"
+        };
+        let toggle_description = if manager_enabled {
+            "Manager mode is active. Select to delegate tasks directly without the manager."
+        } else {
+            "Manager mode is disabled. Select to enable the planning manager."
+        };
+        let next_state = !manager_enabled;
+        let actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::UpdateManagerSettings {
+                enabled: Some(next_state),
+                manager_model: None,
+                worker_model: None,
+                manager_reasoning: None,
+                worker_reasoning: None,
+                persist: true,
+            });
+        })];
+        items.push(SelectionItem {
+            name: toggle_label.into(),
+            description: Some(toggle_description.into()),
+            actions,
+            dismiss_on_select: false,
+            ..Default::default()
+        });
+
+        let manager_label = self
+            .config
+            .manager
+            .manager_model
+            .as_deref()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| format!("session default ({})", self.config.model));
+        let manager_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerModelPopup {
+                target: ManagerModelTarget::Manager,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("Manager model: {manager_label}"),
+            description: Some("Select the model used by the planning manager.".into()),
+            actions: manager_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let resolved_manager = self.resolved_manager_model();
+        let worker_label = self
+            .config
+            .manager
+            .worker_model
+            .as_deref()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| format!("inherit manager ({resolved_manager})"));
+        let worker_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerModelPopup {
+                target: ManagerModelTarget::Worker,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("Worker model: {worker_label}"),
+            description: Some("Select the default model for delegated workers.".into()),
+            actions: worker_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let manager_reason_label = self.manager_reasoning_label();
+        let manager_reason_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerReasoningPopup {
+                target: ManagerModelTarget::Manager,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("Manager reasoning: {manager_reason_label}"),
+            description: Some("Select the reasoning effort used by the manager.".into()),
+            actions: manager_reason_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let worker_reason_label = self.worker_reasoning_label();
+        let worker_reason_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerReasoningPopup {
+                target: ManagerModelTarget::Worker,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("Worker reasoning: {worker_reason_label}"),
+            description: Some("Select the reasoning effort used by worker agents.".into()),
+            actions: worker_reason_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some("Manager orchestration".to_string()),
+            subtitle: Some("These settings apply to new sessions.".to_string()),
+            footer_hint: Some("Enter to adjust, esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_manager_model_popup(&mut self, target: ManagerModelTarget) {
+        let auth_mode = self.auth_manager.auth().map(|auth| auth.mode);
+        let presets: Vec<ModelPreset> = builtin_model_presets(auth_mode);
+        let mut items: Vec<SelectionItem> = Vec::new();
+        let (title, current_model) = match target {
+            ManagerModelTarget::Manager => (
+                "Select manager model",
+                self.config
+                    .manager
+                    .manager_model
+                    .clone()
+                    .unwrap_or_else(|| self.config.model.clone()),
+            ),
+            ManagerModelTarget::Worker => (
+                "Select worker model",
+                self.config
+                    .manager
+                    .worker_model
+                    .clone()
+                    .unwrap_or_else(|| self.resolved_manager_model()),
+            ),
+        };
+
+        match target {
+            ManagerModelTarget::Manager => {
+                let is_current = self.config.manager.manager_model.is_none();
+                let desc = format!(
+                    "Use the primary session model (currently {}) for the manager layer.",
+                    self.config.model
+                );
+                items.push(SelectionItem {
+                    name: "Use session model".into(),
+                    description: Some(desc),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: Some(None),
+                            worker_model: None,
+                            manager_reasoning: None,
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
+            ManagerModelTarget::Worker => {
+                let is_current = self.config.manager.worker_model.is_none();
+                let desc = format!(
+                    "Inherit the manager model (currently {}).",
+                    self.resolved_manager_model()
+                );
+                items.push(SelectionItem {
+                    name: "Inherit manager model".into(),
+                    description: Some(desc),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: Some(None),
+                            manager_reasoning: None,
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
+        }
+
+        for preset in presets.into_iter() {
+            let description = if preset.description.is_empty() {
+                None
+            } else {
+                Some(preset.description.to_string())
+            };
+            let is_current = preset.model == current_model;
+            let slug = preset.model.to_string();
+            let target_for_action = target;
+            items.push(SelectionItem {
+                name: preset.display_name.to_string(),
+                description,
+                is_current,
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::UpdateManagerSettings {
+                        enabled: None,
+                        manager_model: match target_for_action {
+                            ManagerModelTarget::Manager => Some(Some(slug.clone())),
+                            ManagerModelTarget::Worker => None,
+                        },
+                        worker_model: match target_for_action {
+                            ManagerModelTarget::Worker => Some(Some(slug.clone())),
+                            ManagerModelTarget::Manager => None,
+                        },
+                        manager_reasoning: None,
+                        worker_reasoning: None,
+                        persist: true,
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(title.to_string()),
+            subtitle: Some("Applies to future sessions.".to_string()),
+            footer_hint: Some("Press enter to select a model, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
+    pub(crate) fn open_manager_reasoning_popup(&mut self, target: ManagerModelTarget) {
+        let mut items: Vec<SelectionItem> = Vec::new();
+        let (title, current_effort) = match target {
+            ManagerModelTarget::Manager => (
+                "Select manager reasoning",
+                self.config.manager.manager_reasoning_effort,
+            ),
+            ManagerModelTarget::Worker => (
+                "Select worker reasoning",
+                self.config.manager.worker_reasoning_effort,
+            ),
+        };
+
+        match target {
+            ManagerModelTarget::Manager => {
+                let label = self
+                    .config
+                    .model_reasoning_effort
+                    .map(|eff| eff.to_string())
+                    .unwrap_or_else(|| "auto".to_string());
+                let is_current = self.config.manager.manager_reasoning_effort.is_none();
+                items.push(SelectionItem {
+                    name: "Use session reasoning".into(),
+                    description: Some(format!("Use the session-level reasoning effort ({label}).")),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: None,
+                            manager_reasoning: Some(None),
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
+            ManagerModelTarget::Worker => {
+                let fallback = self
+                    .resolved_manager_reasoning_effort()
+                    .map(|eff| eff.to_string())
+                    .unwrap_or_else(|| "auto".to_string());
+                let is_current = self.config.manager.worker_reasoning_effort.is_none();
+                items.push(SelectionItem {
+                    name: "Inherit manager reasoning".into(),
+                    description: Some(format!(
+                        "Workers inherit the manager reasoning ({fallback})."
+                    )),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: None,
+                            manager_reasoning: None,
+                            worker_reasoning: Some(None),
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
+        }
+
+        for effort in ReasoningEffortConfig::iter() {
+            let is_current = current_effort == Some(effort);
+            let target_for_action = target;
+            items.push(SelectionItem {
+                name: effort.to_string(),
+                description: None,
+                is_current,
+                actions: vec![Box::new(move |tx| {
+                    tx.send(AppEvent::UpdateManagerSettings {
+                        enabled: None,
+                        manager_model: None,
+                        worker_model: None,
+                        manager_reasoning: match target_for_action {
+                            ManagerModelTarget::Manager => Some(Some(effort)),
+                            ManagerModelTarget::Worker => None,
+                        },
+                        worker_reasoning: match target_for_action {
+                            ManagerModelTarget::Worker => Some(Some(effort)),
+                            ManagerModelTarget::Manager => None,
+                        },
+                        persist: true,
+                    });
+                })],
+                dismiss_on_select: true,
+                ..Default::default()
+            });
+        }
+
+        self.bottom_pane.show_selection_view(SelectionViewParams {
+            title: Some(title.to_string()),
+            subtitle: Some("Applies to future sessions.".to_string()),
+            footer_hint: Some("Press enter to select an effort, or esc to dismiss.".into()),
+            items,
+            ..Default::default()
+        });
+    }
+
     /// Open a popup to choose the reasoning effort (stage 2) for the given model.
     pub(crate) fn open_reasoning_popup(&mut self, preset: ModelPreset) {
         let default_effort: ReasoningEffortConfig = preset.default_reasoning_effort;
@@ -2019,6 +2385,47 @@ impl ChatWidget {
                 .map(|e| e.to_string())
                 .unwrap_or_else(|| "default".to_string())
         );
+    }
+
+    fn resolved_manager_model(&self) -> String {
+        self.config
+            .manager
+            .manager_model
+            .clone()
+            .unwrap_or_else(|| self.config.model.clone())
+    }
+
+    fn resolved_manager_reasoning_effort(&self) -> Option<ReasoningEffortConfig> {
+        self.config
+            .manager
+            .manager_reasoning_effort
+            .or(self.config.model_reasoning_effort)
+    }
+
+    fn manager_reasoning_label(&self) -> String {
+        match self.config.manager.manager_reasoning_effort {
+            Some(effort) => effort.to_string(),
+            None => {
+                if let Some(global) = self.config.model_reasoning_effort {
+                    format!("session default ({global})")
+                } else {
+                    "session default (auto)".to_string()
+                }
+            }
+        }
+    }
+
+    fn worker_reasoning_label(&self) -> String {
+        match self.config.manager.worker_reasoning_effort {
+            Some(effort) => effort.to_string(),
+            None => {
+                if let Some(fallback) = self.resolved_manager_reasoning_effort() {
+                    format!("inherit manager ({fallback})")
+                } else {
+                    "inherit manager (auto)".to_string()
+                }
+            }
+        }
     }
 
     /// Open a popup to choose the approvals mode (ask for approval policy + sandbox policy).

@@ -71,6 +71,8 @@ pub enum ToolOutput {
         // Some tool calls such as MCP calls may return structured content that can get parsed into an array of polymorphic content items.
         content_items: Option<Vec<FunctionCallOutputContentItem>>,
         success: Option<bool>,
+        // Optional unformatted content used when recording history.
+        history_content: Option<String>,
     },
     Mcp {
         result: Result<CallToolResult, String>,
@@ -98,6 +100,7 @@ impl ToolOutput {
                 content,
                 content_items,
                 success,
+                history_content,
             } => {
                 if matches!(payload, ToolPayload::Custom { .. }) {
                     ResponseInputItem::CustomToolCallOutput {
@@ -111,6 +114,7 @@ impl ToolOutput {
                             content,
                             content_items,
                             success,
+                            history_content,
                         },
                     }
                 }
@@ -177,6 +181,7 @@ mod tests {
             content: "patched".to_string(),
             content_items: None,
             success: Some(true),
+            history_content: None,
         }
         .into_response("call-42", &payload);
 
@@ -198,6 +203,7 @@ mod tests {
             content: "ok".to_string(),
             content_items: None,
             success: Some(true),
+            history_content: None,
         }
         .into_response("fn-1", &payload);
 

@@ -181,6 +181,7 @@ impl ToolRouter {
                 output: codex_protocol::models::FunctionCallOutputPayload {
                     content: message,
                     success: Some(false),
+                    history_content: None,
                     ..Default::default()
                 },
             }

@@ -1,6 +1,7 @@
 //! Configuration object accepted by the `codex` MCP tool-call.
 
 use codex_core::protocol::AskForApproval;
+use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::SandboxMode;
 use codex_utils_json_to_toml::json_to_toml;
 use mcp_types::Tool;
@@ -57,6 +58,26 @@ pub struct CodexToolCallParam {
     /// Prompt used when compacting the conversation.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compact_prompt: Option<String>,
+
+    /// Enable or disable the manager/worker orchestration layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_enabled: Option<bool>,
+
+    /// Override the model used by the manager when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_model: Option<String>,
+
+    /// Override the model used by delegated workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_model: Option<String>,
+
+    /// Override the reasoning effort applied to the manager agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub manager_reasoning: Option<ReasoningEffort>,
+
+    /// Override the reasoning effort applied to workers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub worker_reasoning: Option<ReasoningEffort>,
 }
 
 /// Custom enum mirroring [`AskForApproval`], but has an extra dependency on
@@ -151,6 +172,11 @@ impl CodexToolCallParam {
             base_instructions,
             developer_instructions,
             compact_prompt,
+            manager_enabled,
+            manager_model,
+            worker_model,
+            manager_reasoning,
+            worker_reasoning,
         } = self;
 
         // Build the `ConfigOverrides` recognized by codex-core.
@@ -171,6 +197,11 @@ impl CodexToolCallParam {
             tools_web_search_request: None,
             experimental_sandbox_command_assessment: None,
             additional_writable_roots: Vec::new(),
+            manager_enabled,
+            manager_model,
+            worker_model,
+            manager_reasoning_effort: manager_reasoning,
+            worker_reasoning_effort: worker_reasoning,
         };
 
         let cli_overrides = cli_overrides
@@ -305,6 +336,40 @@ mod tests {
               },
               "compact-prompt": {
                 "description": "Prompt used when compacting the conversation.",
+                "type": "string"
+              },
+              "manager-enabled": {
+                "description": "Enable or disable the manager/worker orchestration layer.",
+                "type": "boolean"
+              },
+              "manager-model": {
+                "description": "Override the model used by the manager when enabled.",
+                "type": "string"
+              },
+              "manager-reasoning": {
+                "description": "Override the reasoning effort applied to the manager agent.",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              "worker-model": {
+                "description": "Override the model used by delegated workers.",
+                "type": "string"
+              },
+              "worker-reasoning": {
+                "description": "Override the reasoning effort applied to workers.",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ],
                 "type": "string"
               },
             },

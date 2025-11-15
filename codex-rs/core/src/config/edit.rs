@@ -1,4 +1,5 @@
 use crate::config::CONFIG_TOML_FILE;
+use crate::config::ManagerConfig;
 use crate::config::types::McpServerConfig;
 use crate::config::types::Notice;
 use anyhow::Context;
@@ -20,6 +21,14 @@ pub enum ConfigEdit {
     SetModel {
         model: Option<String>,
         effort: Option<ReasoningEffort>,
+    },
+    /// Update the manager/worker orchestration settings.
+    SetManagerConfig {
+        enabled: bool,
+        manager_model: Option<String>,
+        worker_model: Option<String>,
+        manager_reasoning_effort: Option<ReasoningEffort>,
+        worker_reasoning_effort: Option<ReasoningEffort>,
     },
     /// Toggle the acknowledgement flag under `[notice]`.
     SetNoticeHideFullAccessWarning(bool),
@@ -240,6 +249,38 @@ impl ConfigDocument {
                 );
                 mutated
             }),
+            ConfigEdit::SetManagerConfig {
+                enabled,
+                manager_model,
+                worker_model,
+                manager_reasoning_effort,
+                worker_reasoning_effort,
+            } => {
+                if !enabled
+                    && manager_model.is_none()
+                    && worker_model.is_none()
+                    && manager_reasoning_effort.is_none()
+                    && worker_reasoning_effort.is_none()
+                {
+                    Ok(self.clear(Scope::Global, &["manager"]))
+                } else {
+                    let mut mutated =
+                        self.write_value(Scope::Global, &["manager", "enabled"], value(*enabled));
+                    mutated |=
+                        self.write_optional_global(&["manager", "manager_model"], manager_model);
+                    mutated |=
+                        self.write_optional_global(&["manager", "worker_model"], worker_model);
+                    mutated |= self.write_reasoning_value(
+                        &["manager", "manager_reasoning_effort"],
+                        *manager_reasoning_effort,
+                    );
+                    mutated |= self.write_reasoning_value(
+                        &["manager", "worker_reasoning_effort"],
+                        *worker_reasoning_effort,
+                    );
+                    Ok(mutated)
+                }
+            }
             ConfigEdit::SetNoticeHideFullAccessWarning(acknowledged) => Ok(self.write_value(
                 Scope::Global,
                 &[Notice::TABLE_KEY, "hide_full_access_warning"],
@@ -283,6 +324,24 @@ impl ConfigDocument {
         match value {
             Some(item) => self.write_value(Scope::Profile, segments, item),
             None => self.clear(Scope::Profile, segments),
+        }
+    }
+
+    fn write_optional_global(&mut self, segments: &[&str], entry: &Option<String>) -> bool {
+        match entry {
+            Some(val) => self.write_value(Scope::Global, segments, value(val.clone())),
+            None => self.clear(Scope::Global, segments),
+        }
+    }
+
+    fn write_reasoning_value(
+        &mut self,
+        segments: &[&str],
+        effort: Option<ReasoningEffort>,
+    ) -> bool {
+        match effort {
+            Some(eff) => self.write_value(Scope::Global, segments, value(eff.to_string())),
+            None => self.clear(Scope::Global, segments),
         }
     }
 
@@ -486,6 +545,17 @@ impl ConfigEditsBuilder {
         self.edits.push(ConfigEdit::SetModel {
             model: model.map(ToOwned::to_owned),
             effort,
+        });
+        self
+    }
+
+    pub fn set_manager_config(mut self, manager: &ManagerConfig) -> Self {
+        self.edits.push(ConfigEdit::SetManagerConfig {
+            enabled: manager.enabled,
+            manager_model: manager.manager_model.clone(),
+            worker_model: manager.worker_model.clone(),
+            manager_reasoning_effort: manager.manager_reasoning_effort,
+            worker_reasoning_effort: manager.worker_reasoning_effort,
         });
         self
     }
@@ -970,6 +1040,37 @@ model_reasoning_effort = "high"
         assert_eq!(contents, expected);
     }
 
+    #[tokio::test]
+    async fn async_builder_set_manager_config_persists() {
+        let tmp = tempdir().expect("tmpdir");
+        let codex_home = tmp.path().to_path_buf();
+
+        let manager = ManagerConfig {
+            enabled: true,
+            manager_model: Some("gpt-5.1".to_string()),
+            worker_model: Some("gpt-5-codex".to_string()),
+            manager_reasoning_effort: Some(ReasoningEffort::High),
+            worker_reasoning_effort: Some(ReasoningEffort::Low),
+        };
+
+        ConfigEditsBuilder::new(&codex_home)
+            .set_manager_config(&manager)
+            .apply()
+            .await
+            .expect("persist");
+
+        let contents =
+            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+        let expected = r#"[manager]
+enabled = true
+manager_model = "gpt-5.1"
+worker_model = "gpt-5-codex"
+manager_reasoning_effort = "high"
+worker_reasoning_effort = "low"
+"#;
+        assert_eq!(contents, expected);
+    }
+
     #[test]
     fn blocking_builder_set_model_round_trips_back_and_forth() {
         let tmp = tempdir().expect("tmpdir");
@@ -1002,6 +1103,34 @@ model_reasoning_effort = "high"
             .expect("persist revert");
         contents = std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
         assert_eq!(contents, initial_expected);
+    }
+
+    #[test]
+    fn blocking_builder_clear_manager_config_removes_table() {
+        let tmp = tempdir().expect("tmpdir");
+        let codex_home = tmp.path();
+
+        let manager = ManagerConfig {
+            enabled: true,
+            manager_model: Some("gpt-5.1".to_string()),
+            worker_model: None,
+            manager_reasoning_effort: Some(ReasoningEffort::Medium),
+            worker_reasoning_effort: None,
+        };
+        ConfigEditsBuilder::new(codex_home)
+            .set_manager_config(&manager)
+            .apply_blocking()
+            .expect("persist initial");
+
+        let cleared = ManagerConfig::default();
+        ConfigEditsBuilder::new(codex_home)
+            .set_manager_config(&cleared)
+            .apply_blocking()
+            .expect("clear manager");
+
+        let contents =
+            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+        assert!(!contents.contains("manager"));
     }
 
     #[test]

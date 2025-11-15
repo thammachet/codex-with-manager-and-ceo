@@ -18,6 +18,8 @@ use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::DelegateWorkerStatusEvent;
+use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
@@ -195,6 +197,37 @@ fn resumed_initial_messages_render_history() {
     assert!(
         text_blob.contains("assistant reply"),
         "expected replayed agent message",
+    );
+}
+
+#[test]
+fn delegate_worker_status_updates_status_header() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "turn".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-7".to_string(),
+            worker_model: "gpt-test".to_string(),
+            status: DelegateWorkerStatusKind::RunningCommand,
+            message: "Running cargo test".to_string(),
+        }),
+    });
+
+    assert!(
+        chat.current_status_header.contains("worker-7"),
+        "expected worker id in status header"
+    );
+    assert!(
+        chat.current_status_header.contains("Running cargo test"),
+        "expected worker message in status header"
     );
 }
 

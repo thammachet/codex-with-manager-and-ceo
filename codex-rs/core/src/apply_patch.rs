@@ -78,13 +78,13 @@ pub(crate) async fn apply_patch(
                 }
                 ReviewDecision::Denied | ReviewDecision::Abort => {
                     InternalApplyPatchInvocation::Output(Err(FunctionCallError::RespondToModel(
-                        "patch rejected by user".to_string(),
+                        "patch rejected by user".into(),
                     )))
                 }
             }
         }
         SafetyCheck::Reject { reason } => InternalApplyPatchInvocation::Output(Err(
-            FunctionCallError::RespondToModel(format!("patch rejected: {reason}")),
+            FunctionCallError::RespondToModel(format!("patch rejected: {reason}").into()),
         )),
     }
 }

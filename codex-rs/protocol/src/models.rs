@@ -348,6 +348,9 @@ pub struct FunctionCallOutputPayload {
     pub content_items: Option<Vec<FunctionCallOutputContentItem>>,
     // TODO(jif) drop this.
     pub success: Option<bool>,
+    #[schemars(skip)]
+    #[ts(skip)]
+    pub history_content: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -389,6 +392,7 @@ impl<'de> Deserialize<'de> for FunctionCallOutputPayload {
                     content,
                     content_items: Some(items),
                     success: None,
+                    history_content: None,
                 })
             }
         }
@@ -413,6 +417,7 @@ impl From<&CallToolResult> for FunctionCallOutputPayload {
                     return FunctionCallOutputPayload {
                         content: serialized_structured_content,
                         success: Some(is_success),
+                        history_content: None,
                         ..Default::default()
                     };
                 }
@@ -420,6 +425,7 @@ impl From<&CallToolResult> for FunctionCallOutputPayload {
                     return FunctionCallOutputPayload {
                         content: err.to_string(),
                         success: Some(false),
+                        history_content: None,
                         ..Default::default()
                     };
                 }
@@ -432,6 +438,7 @@ impl From<&CallToolResult> for FunctionCallOutputPayload {
                 return FunctionCallOutputPayload {
                     content: err.to_string(),
                     success: Some(false),
+                    history_content: None,
                     ..Default::default()
                 };
             }
@@ -443,6 +450,7 @@ impl From<&CallToolResult> for FunctionCallOutputPayload {
             content: serialized_content,
             content_items,
             success: Some(is_success),
+            history_content: None,
         }
     }
 }

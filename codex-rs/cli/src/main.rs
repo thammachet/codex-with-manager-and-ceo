@@ -666,6 +666,26 @@ fn merge_resume_cli_flags(interactive: &mut TuiCli, resume_cli: TuiCli) {
     if !resume_cli.add_dir.is_empty() {
         interactive.add_dir.extend(resume_cli.add_dir);
     }
+    if resume_cli.manager {
+        interactive.manager = true;
+        interactive.no_manager = false;
+    }
+    if resume_cli.no_manager {
+        interactive.no_manager = true;
+        interactive.manager = false;
+    }
+    if let Some(model) = resume_cli.manager_model {
+        interactive.manager_model = Some(model);
+    }
+    if let Some(model) = resume_cli.worker_model {
+        interactive.worker_model = Some(model);
+    }
+    if let Some(reasoning) = resume_cli.manager_reasoning {
+        interactive.manager_reasoning = Some(reasoning);
+    }
+    if let Some(reasoning) = resume_cli.worker_reasoning {
+        interactive.worker_reasoning = Some(reasoning);
+    }
     if let Some(prompt) = resume_cli.prompt {
         interactive.prompt = Some(prompt);
     }

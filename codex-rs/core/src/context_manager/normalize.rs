@@ -31,6 +31,7 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItem>) {
                             call_id: call_id.clone(),
                             output: FunctionCallOutputPayload {
                                 content: "aborted".to_string(),
+                                history_content: None,
                                 ..Default::default()
                             },
                         },
@@ -78,6 +79,7 @@ pub(crate) fn ensure_call_outputs_present(items: &mut Vec<ResponseItem>) {
                                 call_id: call_id.clone(),
                                 output: FunctionCallOutputPayload {
                                     content: "aborted".to_string(),
+                                    history_content: None,
                                     ..Default::default()
                                 },
                             },

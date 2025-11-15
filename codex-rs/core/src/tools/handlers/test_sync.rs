@@ -66,15 +66,15 @@ impl ToolHandler for TestSyncHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "test_sync_tool handler received unsupported payload".to_string(),
+                    "test_sync_tool handler received unsupported payload".into(),
                 ));
             }
         };
 
         let args: TestSyncArgs = serde_json::from_str(&arguments).map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to parse function arguments: {err:?}"
-            ))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err:?}").into(),
+            )
         })?;
 
         if let Some(delay) = args.sleep_before_ms
@@ -97,6 +97,7 @@ impl ToolHandler for TestSyncHandler {
             content: "ok".to_string(),
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }
@@ -104,13 +105,13 @@ impl ToolHandler for TestSyncHandler {
 async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
     if args.participants == 0 {
         return Err(FunctionCallError::RespondToModel(
-            "barrier participants must be greater than zero".to_string(),
+            "barrier participants must be greater than zero".into(),
         ));
     }
 
     if args.timeout_ms == 0 {
         return Err(FunctionCallError::RespondToModel(
-            "barrier timeout must be greater than zero".to_string(),
+            "barrier timeout must be greater than zero".into(),
         ));
     }
 
@@ -122,9 +123,12 @@ async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
                 let state = entry.get();
                 if state.participants != args.participants {
                     let existing = state.participants;
-                    return Err(FunctionCallError::RespondToModel(format!(
-                        "barrier {barrier_id} already registered with {existing} participants"
-                    )));
+                    return Err(FunctionCallError::RespondToModel(
+                        format!(
+                            "barrier {barrier_id} already registered with {existing} participants"
+                        )
+                        .into(),
+                    ));
                 }
                 state.barrier.clone()
             }
@@ -143,7 +147,7 @@ async fn wait_on_barrier(args: BarrierArgs) -> Result<(), FunctionCallError> {
     let wait_result = tokio::time::timeout(timeout, barrier.wait())
         .await
         .map_err(|_| {
-            FunctionCallError::RespondToModel("test_sync_tool barrier wait timed out".to_string())
+            FunctionCallError::RespondToModel("test_sync_tool barrier wait timed out".into())
         })?;
 
     if wait_result.is_leader() {

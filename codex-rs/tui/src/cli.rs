@@ -2,6 +2,7 @@ use clap::Parser;
 use clap::ValueHint;
 use codex_common::ApprovalModeCliArg;
 use codex_common::CliConfigOverrides;
+use codex_common::ReasoningEffortCliArg;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -76,6 +77,34 @@ pub struct Cli {
     /// Additional directories that should be writable alongside the primary workspace.
     #[arg(long = "add-dir", value_name = "DIR", value_hint = ValueHint::DirPath)]
     pub add_dir: Vec<PathBuf>,
+
+    /// Route prompts through a planning manager agent that orchestrates workers.
+    #[arg(
+        long = "manager",
+        conflicts_with = "no_manager",
+        default_value_t = false
+    )]
+    pub manager: bool,
+
+    /// Disable the manager layer even if enabled in configuration.
+    #[arg(long = "no-manager", default_value_t = false)]
+    pub no_manager: bool,
+
+    /// Override the model used for the manager layer.
+    #[arg(long = "manager-model")]
+    pub manager_model: Option<String>,
+
+    /// Override the model used for worker agents spawned by the manager.
+    #[arg(long = "worker-model")]
+    pub worker_model: Option<String>,
+
+    /// Override the reasoning effort used for the manager (none, minimal, low, medium, high).
+    #[arg(long = "manager-reasoning", value_enum)]
+    pub manager_reasoning: Option<ReasoningEffortCliArg>,
+
+    /// Override the reasoning effort used for workers (none, minimal, low, medium, high).
+    #[arg(long = "worker-reasoning", value_enum)]
+    pub worker_reasoning: Option<ReasoningEffortCliArg>,
 
     #[clap(skip)]
     pub config_overrides: CliConfigOverrides,

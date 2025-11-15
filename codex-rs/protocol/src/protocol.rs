@@ -507,6 +507,8 @@ pub enum EventMsg {
 
     BackgroundEvent(BackgroundEventEvent),
 
+    DelegateWorkerStatus(DelegateWorkerStatusEvent),
+
     UndoStarted(UndoStartedEvent),
 
     UndoCompleted(UndoCompletedEvent),
@@ -1282,6 +1284,29 @@ pub struct ExecCommandOutputDeltaEvent {
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct BackgroundEventEvent {
+    pub message: String,
+}
+
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, TS, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum DelegateWorkerStatusKind {
+    Starting,
+    Running,
+    RunningCommand,
+    RunningTool,
+    ApplyingPatch,
+    DiffApplied,
+    Warning,
+    Completed,
+    Failed,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
+pub struct DelegateWorkerStatusEvent {
+    pub worker_id: String,
+    pub worker_model: String,
+    pub status: DelegateWorkerStatusKind,
     pub message: String,
 }
 

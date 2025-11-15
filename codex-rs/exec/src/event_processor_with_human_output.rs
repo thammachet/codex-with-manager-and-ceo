@@ -4,6 +4,7 @@ use codex_core::config::Config;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DeprecationNoticeEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
@@ -184,6 +185,18 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             }
             EventMsg::BackgroundEvent(BackgroundEventEvent { message }) => {
                 ts_msg!(self, "{}", message.style(self.dimmed));
+            }
+            EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+                worker_id,
+                message,
+                ..
+            }) => {
+                ts_msg!(
+                    self,
+                    "{} {}",
+                    format!("[{worker_id}]").style(self.dimmed),
+                    message
+                );
             }
             EventMsg::StreamError(StreamErrorEvent { message }) => {
                 ts_msg!(self, "{}", message.style(self.dimmed));

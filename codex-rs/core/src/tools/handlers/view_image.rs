@@ -38,29 +38,33 @@ impl ToolHandler for ViewImageHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "view_image handler received unsupported payload".to_string(),
+                    "view_image handler received unsupported payload".into(),
                 ));
             }
         };
 
         let args: ViewImageArgs = serde_json::from_str(&arguments).map_err(|e| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {e:?}"))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {e:?}").into(),
+            )
         })?;
 
         let abs_path = turn.resolve_path(Some(args.path));
 
         let metadata = fs::metadata(&abs_path).await.map_err(|error| {
-            FunctionCallError::RespondToModel(format!(
-                "unable to locate image at `{}`: {error}",
-                abs_path.display()
-            ))
+            FunctionCallError::RespondToModel(
+                format!(
+                    "unable to locate image at `{}`: {error}",
+                    abs_path.display()
+                )
+                .into(),
+            )
         })?;
 
         if !metadata.is_file() {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "image path `{}` is not a file",
-                abs_path.display()
-            )));
+            return Err(FunctionCallError::RespondToModel(
+                format!("image path `{}` is not a file", abs_path.display()).into(),
+            ));
         }
         let event_path = abs_path.clone();
 
@@ -68,9 +72,7 @@ impl ToolHandler for ViewImageHandler {
             .inject_input(vec![UserInput::LocalImage { path: abs_path }])
             .await
             .map_err(|_| {
-                FunctionCallError::RespondToModel(
-                    "unable to attach image (no active task)".to_string(),
-                )
+                FunctionCallError::RespondToModel("unable to attach image (no active task)".into())
             })?;
 
         session
@@ -87,6 +89,7 @@ impl ToolHandler for ViewImageHandler {
             content: "attached local image path".to_string(),
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }

@@ -25,6 +25,7 @@ use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
 use codex_core::protocol::SessionSource;
 use codex_ollama::DEFAULT_OSS_MODEL;
+use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::SandboxMode;
 use codex_protocol::user_input::UserInput;
 use event_processor_with_human_output::EventProcessorWithHumanOutput;
@@ -63,6 +64,12 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         cwd,
         skip_git_repo_check,
         add_dir,
+        manager,
+        no_manager,
+        manager_model,
+        worker_model,
+        manager_reasoning: manager_reasoning_cli,
+        worker_reasoning: worker_reasoning_cli,
         color,
         last_message_file,
         json: json_mode,
@@ -163,6 +170,16 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         None // No specific model provider override.
     };
 
+    let manager_enabled = if manager {
+        Some(true)
+    } else if no_manager {
+        Some(false)
+    } else {
+        None
+    };
+    let manager_reasoning = manager_reasoning_cli.map(ReasoningEffort::from);
+    let worker_reasoning = worker_reasoning_cli.map(ReasoningEffort::from);
+
     // Load configuration and determine approval policy
     let overrides = ConfigOverrides {
         model,
@@ -182,6 +199,11 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         tools_web_search_request: None,
         experimental_sandbox_command_assessment: None,
         additional_writable_roots: add_dir,
+        manager_enabled,
+        manager_model,
+        worker_model,
+        manager_reasoning_effort: manager_reasoning,
+        worker_reasoning_effort: worker_reasoning,
     };
     // Parse `-c` overrides.
     let cli_kv_overrides = match config_overrides.parse_overrides() {

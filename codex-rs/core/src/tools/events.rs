@@ -4,6 +4,7 @@ use crate::error::CodexErr;
 use crate::error::SandboxErr;
 use crate::exec::ExecToolCallOutput;
 use crate::function_tool::FunctionCallError;
+use crate::function_tool::RespondToModelMessage;
 use crate::parse_command::parse_command;
 use crate::protocol::EventMsg;
 use crate::protocol::ExecCommandBeginEvent;
@@ -19,6 +20,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use super::format_exec_output_body;
 use super::format_exec_output_str;
 
 #[derive(Clone, Copy)]
@@ -276,27 +278,42 @@ impl ToolEmitter {
     ) -> Result<String, FunctionCallError> {
         let (event, result) = match out {
             Ok(output) => {
-                let content = super::format_exec_output_for_model(&output);
                 let exit_code = output.exit_code;
+                let history = if exit_code == 0 {
+                    None
+                } else {
+                    Some(format_exec_output_body(
+                        &output,
+                        output.aggregated_output.text.as_str(),
+                    ))
+                };
+                let content = super::format_exec_output_for_model(&output);
                 let event = ToolEventStage::Success(output);
                 let result = if exit_code == 0 {
                     Ok(content)
                 } else {
-                    Err(FunctionCallError::RespondToModel(content))
+                    Err(FunctionCallError::RespondToModel(
+                        RespondToModelMessage::with_history(content, history),
+                    ))
                 };
                 (event, result)
             }
             Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Timeout { output })))
             | Err(ToolError::Codex(CodexErr::Sandbox(SandboxErr::Denied { output }))) => {
-                let response = super::format_exec_output_for_model(&output);
+                let output_ref = output.as_ref();
+                let history =
+                    format_exec_output_body(output_ref, output_ref.aggregated_output.text.as_str());
+                let response = super::format_exec_output_for_model(output_ref);
                 let event = ToolEventStage::Failure(ToolEventFailure::Output(*output));
-                let result = Err(FunctionCallError::RespondToModel(response));
+                let result = Err(FunctionCallError::RespondToModel(
+                    RespondToModelMessage::with_history(response, Some(history)),
+                ));
                 (event, result)
             }
             Err(ToolError::Codex(err)) => {
                 let message = format!("execution error: {err:?}");
                 let event = ToolEventStage::Failure(ToolEventFailure::Message(message.clone()));
-                let result = Err(FunctionCallError::RespondToModel(message));
+                let result = Err(FunctionCallError::RespondToModel(message.into()));
                 (event, result)
             }
             Err(ToolError::Rejected(msg)) => {
@@ -308,7 +325,7 @@ impl ToolEmitter {
                     msg
                 };
                 let event = ToolEventStage::Failure(ToolEventFailure::Message(normalized.clone()));
-                let result = Err(FunctionCallError::RespondToModel(normalized));
+                let result = Err(FunctionCallError::RespondToModel(normalized.into()));
                 (event, result)
             }
         };

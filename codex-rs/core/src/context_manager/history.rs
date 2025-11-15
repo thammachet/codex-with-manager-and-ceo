@@ -153,8 +153,12 @@ impl ContextManager {
     fn process_item(item: &ResponseItem) -> ResponseItem {
         match item {
             ResponseItem::FunctionCallOutput { call_id, output } => {
+                let source_content = output
+                    .history_content
+                    .as_deref()
+                    .unwrap_or(output.content.as_str());
                 let truncated = format_output_for_model_body(
-                    output.content.as_str(),
+                    source_content,
                     CONTEXT_WINDOW_HARD_LIMIT_BYTES,
                     CONTEXT_WINDOW_HARD_LIMIT_LINES,
                 );
@@ -168,6 +172,7 @@ impl ContextManager {
                         content: truncated,
                         content_items: truncated_items,
                         success: output.success,
+                        history_content: None,
                     },
                 }
             }

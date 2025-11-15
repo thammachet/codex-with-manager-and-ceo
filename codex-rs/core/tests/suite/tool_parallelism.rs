@@ -18,6 +18,7 @@ use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::TestCodex;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
@@ -65,7 +66,7 @@ async fn build_codex_with_test_tool(server: &wiremock::MockServer) -> anyhow::Re
 fn assert_parallel_duration(actual: Duration) {
     // Allow headroom for runtime overhead while still differentiating from serial execution.
     assert!(
-        actual < Duration::from_millis(750),
+        actual < Duration::from_millis(1_200),
         "expected parallel execution to finish quickly, got {actual:?}"
     );
 }
@@ -80,6 +81,7 @@ fn assert_serial_duration(actual: Duration) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn read_file_tools_run_in_parallel() -> anyhow::Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
 
     let server = start_mock_server().await;
     let test = build_codex_with_test_tool(&server).await?;

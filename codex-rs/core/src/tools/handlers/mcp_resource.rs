@@ -200,7 +200,7 @@ impl ToolHandler for McpResourceHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "mcp_resource handler received unsupported payload".to_string(),
+                    "mcp_resource handler received unsupported payload".into(),
                 ));
             }
         };
@@ -235,9 +235,9 @@ impl ToolHandler for McpResourceHandler {
                 )
                 .await
             }
-            other => Err(FunctionCallError::RespondToModel(format!(
-                "unsupported MCP resource tool: {other}"
-            ))),
+            other => Err(FunctionCallError::RespondToModel(
+                format!("unsupported MCP resource tool: {other}").into(),
+            )),
         }
     }
 }
@@ -271,7 +271,9 @@ async fn handle_list_resources(
                 .list_resources(&server_name, params)
                 .await
                 .map_err(|err| {
-                    FunctionCallError::RespondToModel(format!("resources/list failed: {err:#}"))
+                    FunctionCallError::RespondToModel(
+                        format!("resources/list failed: {err:#}").into(),
+                    )
                 })?;
             Ok(ListResourcesPayload::from_single_server(
                 server_name,
@@ -280,7 +282,7 @@ async fn handle_list_resources(
         } else {
             if cursor.is_some() {
                 return Err(FunctionCallError::RespondToModel(
-                    "cursor can only be used when a server is specified".to_string(),
+                    "cursor can only be used when a server is specified".into(),
                 ));
             }
 
@@ -378,9 +380,9 @@ async fn handle_list_resource_templates(
                 .list_resource_templates(&server_name, params)
                 .await
                 .map_err(|err| {
-                    FunctionCallError::RespondToModel(format!(
-                        "resources/templates/list failed: {err:#}"
-                    ))
+                    FunctionCallError::RespondToModel(
+                        format!("resources/templates/list failed: {err:#}").into(),
+                    )
                 })?;
             Ok(ListResourceTemplatesPayload::from_single_server(
                 server_name,
@@ -389,7 +391,7 @@ async fn handle_list_resource_templates(
         } else {
             if cursor.is_some() {
                 return Err(FunctionCallError::RespondToModel(
-                    "cursor can only be used when a server is specified".to_string(),
+                    "cursor can only be used when a server is specified".into(),
                 ));
             }
 
@@ -481,7 +483,7 @@ async fn handle_read_resource(
             .read_resource(&server, ReadResourceRequestParams { uri: uri.clone() })
             .await
             .map_err(|err| {
-                FunctionCallError::RespondToModel(format!("resources/read failed: {err:#}"))
+                FunctionCallError::RespondToModel(format!("resources/read failed: {err:#}").into())
             })?;
 
         Ok(ReadResourcePayload {
@@ -609,9 +611,9 @@ fn normalize_optional_string(input: Option<String>) -> Option<String> {
 fn normalize_required_string(field: &str, value: String) -> Result<String, FunctionCallError> {
     match normalize_optional_string(Some(value)) {
         Some(normalized) => Ok(normalized),
-        None => Err(FunctionCallError::RespondToModel(format!(
-            "{field} must be provided"
-        ))),
+        None => Err(FunctionCallError::RespondToModel(
+            format!("{field} must be provided").into(),
+        )),
     }
 }
 
@@ -620,15 +622,16 @@ where
     T: Serialize,
 {
     let content = serde_json::to_string(&payload).map_err(|err| {
-        FunctionCallError::RespondToModel(format!(
-            "failed to serialize MCP resource response: {err}"
-        ))
+        FunctionCallError::RespondToModel(
+            format!("failed to serialize MCP resource response: {err}").into(),
+        )
     })?;
 
     Ok(ToolOutput::Function {
         content,
         content_items: None,
         success: Some(true),
+        history_content: None,
     })
 }
 
@@ -637,7 +640,9 @@ fn parse_arguments(raw_args: &str) -> Result<Option<Value>, FunctionCallError> {
         Ok(None)
     } else {
         serde_json::from_str(raw_args).map(Some).map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err}").into(),
+            )
         })
     }
 }
@@ -648,10 +653,12 @@ where
 {
     match arguments {
         Some(value) => serde_json::from_value(value).map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {err}"))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err}").into(),
+            )
         }),
         None => Err(FunctionCallError::RespondToModel(
-            "failed to parse function arguments: expected value".to_string(),
+            "failed to parse function arguments: expected value".into(),
         )),
     }
 }

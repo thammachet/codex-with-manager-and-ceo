@@ -244,6 +244,7 @@ fn record_items_truncates_function_call_output_content() {
         output: FunctionCallOutputPayload {
             content: long_output.clone(),
             success: Some(true),
+            history_content: None,
             ..Default::default()
         },
     };
@@ -467,6 +468,7 @@ fn truncates_across_multiple_under_limit_texts_and_reports_omitted() {
                 FunctionCallOutputContentItem::InputText { text: t5 },
             ]),
             success: Some(true),
+            history_content: None,
         },
     };
 

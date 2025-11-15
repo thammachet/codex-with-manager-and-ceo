@@ -13,6 +13,7 @@ use codex_core::protocol::WarningEvent;
 use codex_protocol::user_input::UserInput;
 use core_test_support::load_default_config_for_test;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_sandbox;
 use core_test_support::wait_for_event;
 use core_test_support::wait_for_event_match;
 use std::collections::VecDeque;
@@ -918,6 +919,7 @@ async fn auto_compact_stops_after_failed_attempt() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manual_compact_retries_after_context_window_error() {
     skip_if_no_network!();
+    skip_if_sandbox!();
 
     let server = start_mock_server().await;
 

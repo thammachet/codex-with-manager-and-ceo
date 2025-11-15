@@ -104,6 +104,7 @@ impl ToolCallRuntime {
                 call_id: call.call_id.clone(),
                 output: FunctionCallOutputPayload {
                     content: Self::abort_message(call, secs),
+                    history_content: None,
                     ..Default::default()
                 },
             },

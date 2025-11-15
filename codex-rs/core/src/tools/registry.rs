@@ -81,7 +81,7 @@ impl ToolRegistry {
                     false,
                     &message,
                 );
-                return Err(FunctionCallError::RespondToModel(message));
+                return Err(FunctionCallError::RespondToModel(message.into()));
             }
         };
 

@@ -26,6 +26,7 @@ pub enum ConfigShellToolType {
 
 #[derive(Debug, Clone)]
 pub(crate) struct ToolsConfig {
+    pub mode: ToolMode,
     pub shell_type: ConfigShellToolType,
     pub apply_patch_tool_type: Option<ApplyPatchToolType>,
     pub web_search_request: bool,
@@ -33,9 +34,16 @@ pub(crate) struct ToolsConfig {
     pub experimental_supported_tools: Vec<String>,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolMode {
+    Standard,
+    Manager,
+}
+
 pub(crate) struct ToolsConfigParams<'a> {
     pub(crate) model_family: &'a ModelFamily,
     pub(crate) features: &'a Features,
+    pub(crate) mode: ToolMode,
 }
 
 impl ToolsConfig {
@@ -43,6 +51,7 @@ impl ToolsConfig {
         let ToolsConfigParams {
             model_family,
             features,
+            mode,
         } = params;
         let include_apply_patch_tool = features.enabled(Feature::ApplyPatchFreeform);
         let include_web_search_request = features.enabled(Feature::WebSearchRequest);
@@ -69,6 +78,7 @@ impl ToolsConfig {
         };
 
         Self {
+            mode: *mode,
             shell_type,
             apply_patch_tool_type,
             web_search_request: include_web_search_request,
@@ -209,6 +219,62 @@ fn create_exec_command_tool() -> ToolSpec {
         parameters: JsonSchema::Object {
             properties,
             required: Some(vec!["cmd".to_string()]),
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_delegate_worker_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "objective".to_string(),
+        JsonSchema::String {
+            description: Some("Clear statement of what the worker should accomplish.".to_string()),
+        },
+    );
+    properties.insert(
+        "context".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional additional background, code snippets, or requirements for the worker."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "model".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional worker-specific model slug; defaults to the configured worker model."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "worker_id".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Existing worker identifier returned by a previous delegate_worker call. Required when messaging or closing a worker.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "action".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Action to perform: \"start\" (default), \"message\" to resume a worker, or \"close\" to shut it down.".to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "delegate_worker".to_string(),
+        description:
+            "Delegates a task to a worker agent that can run tools, execute commands, and edit files.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: None,
             additional_properties: Some(false.into()),
         },
     })
@@ -936,6 +1002,7 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
+    use crate::tools::handlers::DelegateWorkerHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
@@ -959,6 +1026,15 @@ pub(crate) fn build_specs(
     let mcp_handler = Arc::new(McpHandler);
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler);
+
+    if matches!(config.mode, ToolMode::Manager) {
+        let delegate_handler = Arc::new(DelegateWorkerHandler);
+        builder.push_spec(create_delegate_worker_tool());
+        builder.register_handler("delegate_worker", delegate_handler);
+        builder.push_spec(PLAN_TOOL.clone());
+        builder.register_handler("update_plan", plan_handler);
+        return builder;
+    }
 
     match &config.shell_type {
         ConfigShellToolType::Default => {
@@ -1178,6 +1254,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(&config, None).build();
 
@@ -1234,6 +1311,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(&config, Some(HashMap::new())).build();
         let tool_names = tools.iter().map(|t| t.spec.name()).collect::<Vec<_>>();
@@ -1395,6 +1473,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(&config, Some(HashMap::new())).build();
 
@@ -1433,6 +1512,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(&config, None).build();
 
@@ -1452,6 +1532,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(&config, None).build();
 
@@ -1482,6 +1563,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(
             &config,
@@ -1575,6 +1657,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
 
         // Intentionally construct a map with keys that would sort alphabetically.
@@ -1652,6 +1735,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
 
         let (tools, _) = build_specs(
@@ -1709,6 +1793,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
 
         let (tools, _) = build_specs(
@@ -1763,6 +1848,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
 
         let (tools, _) = build_specs(
@@ -1819,6 +1905,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
 
         let (tools, _) = build_specs(
@@ -1902,6 +1989,7 @@ mod tests {
         let config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &features,
+            mode: ToolMode::Standard,
         });
         let (tools, _) = build_specs(
             &config,

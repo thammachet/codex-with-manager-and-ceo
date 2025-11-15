@@ -102,15 +102,15 @@ impl ToolHandler for ReadFileHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "read_file handler received unsupported payload".to_string(),
+                    "read_file handler received unsupported payload".into(),
                 ));
             }
         };
 
         let args: ReadFileArgs = serde_json::from_str(&arguments).map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to parse function arguments: {err:?}"
-            ))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err:?}").into(),
+            )
         })?;
 
         let ReadFileArgs {
@@ -123,20 +123,20 @@ impl ToolHandler for ReadFileHandler {
 
         if offset == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "offset must be a 1-indexed line number".to_string(),
+                "offset must be a 1-indexed line number".into(),
             ));
         }
 
         if limit == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "limit must be greater than zero".to_string(),
+                "limit must be greater than zero".into(),
             ));
         }
 
         let path = PathBuf::from(&file_path);
         if !path.is_absolute() {
             return Err(FunctionCallError::RespondToModel(
-                "file_path must be an absolute path".to_string(),
+                "file_path must be an absolute path".into(),
             ));
         }
 
@@ -151,6 +151,7 @@ impl ToolHandler for ReadFileHandler {
             content: collected.join("\n"),
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }
@@ -169,7 +170,7 @@ mod slice {
         limit: usize,
     ) -> Result<Vec<String>, FunctionCallError> {
         let file = File::open(path).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
+            FunctionCallError::RespondToModel(format!("failed to read file: {err}").into())
         })?;
 
         let mut reader = BufReader::new(file);
@@ -180,7 +181,7 @@ mod slice {
         loop {
             buffer.clear();
             let bytes_read = reader.read_until(b'\n', &mut buffer).await.map_err(|err| {
-                FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
+                FunctionCallError::RespondToModel(format!("failed to read file: {err}").into())
             })?;
 
             if bytes_read == 0 {
@@ -214,7 +215,7 @@ mod slice {
 
         if seen < offset {
             return Err(FunctionCallError::RespondToModel(
-                "offset exceeds file length".to_string(),
+                "offset exceeds file length".into(),
             ));
         }
 
@@ -244,21 +245,23 @@ mod indentation {
         let anchor_line = options.anchor_line.unwrap_or(offset);
         if anchor_line == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "anchor_line must be a 1-indexed line number".to_string(),
+                "anchor_line must be a 1-indexed line number"
+                    .to_string()
+                    .into(),
             ));
         }
 
         let guard_limit = options.max_lines.unwrap_or(limit);
         if guard_limit == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "max_lines must be greater than zero".to_string(),
+                "max_lines must be greater than zero".to_string().into(),
             ));
         }
 
         let collected = collect_file_lines(path).await?;
         if collected.is_empty() || anchor_line > collected.len() {
             return Err(FunctionCallError::RespondToModel(
-                "anchor_line exceeds file length".to_string(),
+                "anchor_line exceeds file length".to_string().into(),
             ));
         }
 
@@ -369,7 +372,7 @@ mod indentation {
 
     async fn collect_file_lines(path: &Path) -> Result<Vec<LineRecord>, FunctionCallError> {
         let file = File::open(path).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
+            FunctionCallError::RespondToModel(format!("failed to read file: {err}").into())
         })?;
 
         let mut reader = BufReader::new(file);
@@ -380,7 +383,7 @@ mod indentation {
         loop {
             buffer.clear();
             let bytes_read = reader.read_until(b'\n', &mut buffer).await.map_err(|err| {
-                FunctionCallError::RespondToModel(format!("failed to read file: {err}"))
+                FunctionCallError::RespondToModel(format!("failed to read file: {err}").into())
             })?;
 
             if bytes_read == 0 {
@@ -527,7 +530,7 @@ gamma
             .expect_err("offset exceeds length");
         assert_eq!(
             err,
-            FunctionCallError::RespondToModel("offset exceeds file length".to_string())
+            FunctionCallError::RespondToModel("offset exceeds file length".into())
         );
         Ok(())
     }

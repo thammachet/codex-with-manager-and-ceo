@@ -67,6 +67,27 @@ The model that Codex should use.
 model = "gpt-5"  # overrides the default ("gpt-5-codex" on macOS/Linux, "gpt-5" on Windows)
 ```
 
+### manager
+
+Codex can route each prompt through a planning manager that coordinates one or more worker agents. Each worker runs a full Codex session and is able to execute tools and edit files, while the manager focuses on breaking the task down, issuing `delegate_worker` calls, and summarizing results back to you. By default the manager layer is disabled; enable it in `config.toml` or via CLI flags when you want the higher-level orchestration.
+
+```toml
+[manager]
+enabled = true
+manager_model = "gpt-5.1"      # optional; defaults to whatever `model` is set to
+worker_model = "gpt-5-codex"   # optional; workers fall back to the manager model when omitted
+manager_reasoning_effort = "high"    # optional; inherits the session's reasoning when omitted
+worker_reasoning_effort = "medium"   # optional; workers fall back to the manager reasoning when omitted
+```
+
+- Use `codex --manager` (or `codex exec --manager`) to turn the layer on for a session, `--no-manager` to force direct worker control, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files.
+- Use `--manager-reasoning <none|minimal|low|medium|high>` and `--worker-reasoning <…>` to pin reasoning effort for each layer without editing config files. Omit the flags (or remove the TOML keys) to inherit the session’s reasoning defaults.
+- When the manager layer is active, your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
+- Worker-specific instructions should be included in the objective/context passed to `delegate_worker`; the manager prompt already forbids direct tool usage and summarizes worker output for you.
+- The interactive UI surfaces a live "Worker status" hint (e.g., `Running cargo test · worker-3`) whenever the manager is waiting on a worker, so you can confirm progress without scrolling through extra log lines.
+
+Every worker response now includes `Worker ID: worker-#`. Supply that ID plus `action = "message"` and a new `objective` in the next `delegate_worker` call to resume the same worker, or `action = "close"` to release it explicitly.
+
 ### model_providers
 
 This option lets you add to the default set of model providers bundled with Codex. The map key becomes the value you use with `model_provider` to select the provider.

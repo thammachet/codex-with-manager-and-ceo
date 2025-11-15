@@ -78,7 +78,7 @@ impl ToolHandler for PlanHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "update_plan handler received unsupported payload".to_string(),
+                    "update_plan handler received unsupported payload".into(),
                 ));
             }
         };
@@ -90,6 +90,7 @@ impl ToolHandler for PlanHandler {
             content,
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }
@@ -112,6 +113,6 @@ pub(crate) async fn handle_update_plan(
 
 fn parse_update_plan_arguments(arguments: &str) -> Result<UpdatePlanArgs, FunctionCallError> {
     serde_json::from_str::<UpdatePlanArgs>(arguments).map_err(|e| {
-        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {e}"))
+        FunctionCallError::RespondToModel(format!("failed to parse function arguments: {e}").into())
     })
 }

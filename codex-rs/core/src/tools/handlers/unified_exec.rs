@@ -112,7 +112,7 @@ impl ToolHandler for UnifiedExecHandler {
             ToolPayload::UnifiedExec { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "unified_exec handler received unsupported payload".to_string(),
+                    "unified_exec handler received unsupported payload".into(),
                 ));
             }
         };
@@ -123,9 +123,9 @@ impl ToolHandler for UnifiedExecHandler {
         let response = match tool_name.as_str() {
             "exec_command" => {
                 let args: ExecCommandArgs = serde_json::from_str(&arguments).map_err(|err| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to parse exec_command arguments: {err:?}"
-                    ))
+                    FunctionCallError::RespondToModel(
+                        format!("failed to parse exec_command arguments: {err:?}").into(),
+                    )
                 })?;
 
                 let command = get_command(&args);
@@ -144,10 +144,13 @@ impl ToolHandler for UnifiedExecHandler {
                         codex_protocol::protocol::AskForApproval::OnRequest
                     )
                 {
-                    return Err(FunctionCallError::RespondToModel(format!(
-                        "approval policy is {policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {policy:?}",
-                        policy = context.turn.approval_policy
-                    )));
+                    return Err(FunctionCallError::RespondToModel(
+                        format!(
+                            "approval policy is {policy:?}; reject command — you cannot ask for escalated permissions if the approval policy is {policy:?}",
+                            policy = context.turn.approval_policy
+                        )
+                        .into(),
+                    ));
                 }
 
                 let workdir = workdir
@@ -180,14 +183,16 @@ impl ToolHandler for UnifiedExecHandler {
                     )
                     .await
                     .map_err(|err| {
-                        FunctionCallError::RespondToModel(format!("exec_command failed: {err:?}"))
+                        FunctionCallError::RespondToModel(
+                            format!("exec_command failed: {err:?}").into(),
+                        )
                     })?
             }
             "write_stdin" => {
                 let args: WriteStdinArgs = serde_json::from_str(&arguments).map_err(|err| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to parse write_stdin arguments: {err:?}"
-                    ))
+                    FunctionCallError::RespondToModel(
+                        format!("failed to parse write_stdin arguments: {err:?}").into(),
+                    )
                 })?;
                 manager
                     .write_stdin(WriteStdinRequest {
@@ -198,13 +203,15 @@ impl ToolHandler for UnifiedExecHandler {
                     })
                     .await
                     .map_err(|err| {
-                        FunctionCallError::RespondToModel(format!("write_stdin failed: {err:?}"))
+                        FunctionCallError::RespondToModel(
+                            format!("write_stdin failed: {err:?}").into(),
+                        )
                     })?
             }
             other => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "unsupported unified exec function {other}"
-                )));
+                return Err(FunctionCallError::RespondToModel(
+                    format!("unsupported unified exec function {other}").into(),
+                ));
             }
         };
 
@@ -226,6 +233,7 @@ impl ToolHandler for UnifiedExecHandler {
             content,
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }

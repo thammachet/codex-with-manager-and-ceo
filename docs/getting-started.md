@@ -94,6 +94,14 @@ codex --cd apps/frontend --add-dir ../backend --add-dir ../shared
 
 Codex can then inspect and edit files in each listed directory without leaving the primary workspace.
 
+#### Manager/worker orchestration
+
+Need a planning layer that can break big requests into smaller sub-tasks? Launch Codex (or `codex exec`) with `--manager` to insert the new manager agent between you and the worker. The manager only plans and delegates via the `delegate_worker` tool; workers still carry out the actual edits and command executions. Use `--manager-model <slug>` / `--worker-model <slug>` to pick the models for each layer, `--manager-reasoning <none|minimal|low|medium|high>` / `--worker-reasoning <…>` to pin their reasoning effort, and `--no-manager` whenever you want to talk directly to the worker again. Inside the UI, open the `/manager` command to toggle the manager and adjust its models and reasoning levels without leaving the TUI.
+
+Each worker run returns a `Worker ID: worker-#` line. Include that ID plus `"action": "message"` the next time you call `delegate_worker` to resume the same worker (for example, `{"worker_id":"worker-3","action":"message","objective":"Answer this follow-up"}`). When you're done with a worker, send `{ "worker_id": "worker-3", "action": "close" }` so its resources are released.
+
+While the manager is waiting on a worker, the status indicator in the bottom pane now shows live updates such as "Running cargo test" or "Calling tool my_server.my_tool" so you can confirm the worker is still progressing without flooding the transcript.
+
 #### Shell completions
 
 Generate shell completion scripts via:

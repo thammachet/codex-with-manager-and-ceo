@@ -65,17 +65,17 @@ pub fn format_exec_output_str(exec_output: &ExecToolCallOutput) -> String {
         aggregated_output, ..
     } = exec_output;
 
-    let content = aggregated_output.text.as_str();
+    let body = format_exec_output_body(exec_output, aggregated_output.text.as_str());
 
-    let body = if exec_output.timed_out {
-        format!(
+    format_output_for_model_body(&body, MODEL_FORMAT_MAX_BYTES, MODEL_FORMAT_MAX_LINES)
+}
+
+pub fn format_exec_output_body(exec_output: &ExecToolCallOutput, content: &str) -> String {
+    if exec_output.timed_out {
+        return format!(
             "command timed out after {} milliseconds\n{content}",
             exec_output.duration.as_millis()
-        )
-    } else {
-        content.to_string()
-    };
-
-    // Truncate for model consumption before serialization.
-    format_output_for_model_body(&body, MODEL_FORMAT_MAX_BYTES, MODEL_FORMAT_MAX_LINES)
+        );
+    }
+    content.to_string()
 }

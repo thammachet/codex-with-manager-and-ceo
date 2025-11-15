@@ -16,6 +16,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
+use crate::tools::format_exec_output_body;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -104,9 +105,9 @@ impl ToolHandler for ShellHandler {
             ToolPayload::Function { arguments } => {
                 let params: ShellToolCallParams =
                     serde_json::from_str(&arguments).map_err(|e| {
-                        FunctionCallError::RespondToModel(format!(
-                            "failed to parse function arguments: {e:?}"
-                        ))
+                        FunctionCallError::RespondToModel(
+                            format!("failed to parse function arguments: {e:?}").into(),
+                        )
                     })?;
                 let exec_params = Self::to_exec_params(params, turn.as_ref());
                 Self::run_exec_like(
@@ -133,9 +134,9 @@ impl ToolHandler for ShellHandler {
                 )
                 .await
             }
-            _ => Err(FunctionCallError::RespondToModel(format!(
-                "unsupported payload for shell handler: {tool_name}"
-            ))),
+            _ => Err(FunctionCallError::RespondToModel(
+                format!("unsupported payload for shell handler: {tool_name}").into(),
+            )),
         }
     }
 }
@@ -161,13 +162,15 @@ impl ToolHandler for ShellCommandHandler {
         } = invocation;
 
         let ToolPayload::Function { arguments } = payload else {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "unsupported payload for shell_command handler: {tool_name}"
-            )));
+            return Err(FunctionCallError::RespondToModel(
+                format!("unsupported payload for shell_command handler: {tool_name}").into(),
+            ));
         };
 
         let params: ShellCommandToolCallParams = serde_json::from_str(&arguments).map_err(|e| {
-            FunctionCallError::RespondToModel(format!("failed to parse function arguments: {e:?}"))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {e:?}").into(),
+            )
         })?;
         let exec_params = Self::to_exec_params(params, session.as_ref(), turn.as_ref());
         ShellHandler::run_exec_like(
@@ -200,10 +203,13 @@ impl ShellHandler {
                 codex_protocol::protocol::AskForApproval::OnRequest
             )
         {
-            return Err(FunctionCallError::RespondToModel(format!(
-                "approval policy is {policy:?}; reject command — you should not ask for escalated permissions if the approval policy is {policy:?}",
-                policy = turn.approval_policy
-            )));
+            return Err(FunctionCallError::RespondToModel(
+                format!(
+                    "approval policy is {policy:?}; reject command — you should not ask for escalated permissions if the approval policy is {policy:?}",
+                    policy = turn.approval_policy
+                )
+                .into(),
+            ));
         }
 
         // Intercept apply_patch if present.
@@ -222,6 +228,7 @@ impl ShellHandler {
                             content,
                             content_items: None,
                             success: Some(true),
+                            history_content: None,
                         });
                     }
                     InternalApplyPatchInvocation::DelegateToExec(apply) => {
@@ -255,6 +262,9 @@ impl ShellHandler {
                         let out = orchestrator
                             .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
                             .await;
+                        let history_content = out.as_ref().ok().map(|output| {
+                            format_exec_output_body(output, output.aggregated_output.text.as_str())
+                        });
                         let event_ctx = ToolEventCtx::new(
                             session.as_ref(),
                             turn.as_ref(),
@@ -266,14 +276,15 @@ impl ShellHandler {
                             content,
                             content_items: None,
                             success: Some(true),
+                            history_content,
                         });
                     }
                 }
             }
             codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-                return Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )));
+                return Err(FunctionCallError::RespondToModel(
+                    format!("apply_patch verification failed: {parse_error}").into(),
+                ));
             }
             codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
                 tracing::trace!("Failed to parse shell command, {error:?}");
@@ -312,12 +323,17 @@ impl ShellHandler {
         let out = orchestrator
             .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
             .await;
+        let history_content = out
+            .as_ref()
+            .ok()
+            .map(|output| format_exec_output_body(output, output.aggregated_output.text.as_str()));
         let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, None);
         let content = emitter.finish(event_ctx, out).await?;
         Ok(ToolOutput::Function {
             content,
             content_items: None,
             success: Some(true),
+            history_content,
         })
     }
 }

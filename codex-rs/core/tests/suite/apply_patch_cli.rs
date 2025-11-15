@@ -24,6 +24,7 @@ use core_test_support::responses::ev_response_created;
 use core_test_support::responses::mount_sse_sequence;
 use core_test_support::responses::sse;
 use core_test_support::skip_if_no_network;
+use core_test_support::skip_if_sandbox;
 use core_test_support::test_codex::TestCodexHarness;
 use core_test_support::wait_for_event;
 use serde_json::json;
@@ -453,6 +454,7 @@ async fn apply_patch_cli_delete_missing_file_reports_error(
     model_output: ApplyPatchModelOutput,
 ) -> Result<()> {
     skip_if_no_network!(Ok(()));
+    skip_if_sandbox!(Ok(()));
 
     let harness = apply_patch_harness().await?;
 

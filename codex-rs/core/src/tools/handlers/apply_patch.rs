@@ -13,6 +13,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
+use crate::tools::format_exec_output_body;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -59,16 +60,16 @@ impl ToolHandler for ApplyPatchHandler {
         let patch_input = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = serde_json::from_str(&arguments).map_err(|e| {
-                    FunctionCallError::RespondToModel(format!(
-                        "failed to parse function arguments: {e:?}"
-                    ))
+                    FunctionCallError::RespondToModel(
+                        format!("failed to parse function arguments: {e:?}").into(),
+                    )
                 })?;
                 args.input
             }
             ToolPayload::Custom { input } => input,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received unsupported payload".to_string(),
+                    "apply_patch handler received unsupported payload".into(),
                 ));
             }
         };
@@ -88,6 +89,7 @@ impl ToolHandler for ApplyPatchHandler {
                             content,
                             content_items: None,
                             success: Some(true),
+                            history_content: None,
                         })
                     }
                     InternalApplyPatchInvocation::DelegateToExec(apply) => {
@@ -128,29 +130,33 @@ impl ToolHandler for ApplyPatchHandler {
                             &call_id,
                             Some(&tracker),
                         );
+                        let history_content = out.as_ref().ok().map(|output| {
+                            format_exec_output_body(output, output.aggregated_output.text.as_str())
+                        });
                         let content = emitter.finish(event_ctx, out).await?;
                         Ok(ToolOutput::Function {
                             content,
                             content_items: None,
                             success: Some(true),
+                            history_content,
                         })
                     }
                 }
             }
             codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-                Err(FunctionCallError::RespondToModel(format!(
-                    "apply_patch verification failed: {parse_error}"
-                )))
+                Err(FunctionCallError::RespondToModel(
+                    format!("apply_patch verification failed: {parse_error}").into(),
+                ))
             }
             codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
                 tracing::trace!("Failed to parse apply_patch input, {error:?}");
                 Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received invalid patch input".to_string(),
+                    "apply_patch handler received invalid patch input".into(),
                 ))
             }
             codex_apply_patch::MaybeApplyPatchVerified::NotApplyPatch => {
                 Err(FunctionCallError::RespondToModel(
-                    "apply_patch handler received non-apply_patch input".to_string(),
+                    "apply_patch handler received non-apply_patch input".into(),
                 ))
             }
         }

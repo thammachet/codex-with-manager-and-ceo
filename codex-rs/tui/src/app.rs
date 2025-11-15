@@ -473,6 +473,12 @@ impl App {
             AppEvent::OpenReasoningPopup { model } => {
                 self.chat_widget.open_reasoning_popup(model);
             }
+            AppEvent::OpenManagerModelPopup { target } => {
+                self.chat_widget.open_manager_model_popup(target);
+            }
+            AppEvent::OpenManagerReasoningPopup { target } => {
+                self.chat_widget.open_manager_reasoning_popup(target);
+            }
             AppEvent::OpenFullAccessConfirmation { preset } => {
                 self.chat_widget.open_full_access_confirmation(preset);
             }
@@ -541,6 +547,127 @@ impl App {
                                 .add_error_message(format!("Failed to save default model: {err}"));
                         }
                     }
+                }
+            }
+            AppEvent::UpdateManagerSettings {
+                enabled,
+                manager_model,
+                worker_model,
+                manager_reasoning,
+                worker_reasoning,
+                persist,
+            } => {
+                let mut mutated = false;
+                if let Some(new_state) = enabled
+                    && self.config.manager.enabled != new_state
+                {
+                    self.config.manager.enabled = new_state;
+                    let message = if new_state {
+                        "Manager mode enabled. Start a new session (/new) to apply."
+                    } else {
+                        "Manager mode disabled. Start a new session (/new) to apply."
+                    };
+                    self.chat_widget.add_info_message(message.to_string(), None);
+                    mutated = true;
+                }
+                if let Some(manager_model_update) = manager_model
+                    && self.config.manager.manager_model != manager_model_update
+                {
+                    self.config.manager.manager_model = manager_model_update.clone();
+                    let display = manager_model_update
+                        .clone()
+                        .unwrap_or_else(|| self.config.model.clone());
+                    let message = if manager_model_update.is_some() {
+                        format!(
+                            "Manager model set to {display}. Start a new session (/new) to apply."
+                        )
+                    } else {
+                        format!(
+                            "Manager now uses the session model ({display}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if let Some(worker_model_update) = worker_model
+                    && self.config.manager.worker_model != worker_model_update
+                {
+                    self.config.manager.worker_model = worker_model_update.clone();
+                    let fallback = self
+                        .config
+                        .manager
+                        .manager_model
+                        .clone()
+                        .unwrap_or_else(|| self.config.model.clone());
+                    let display = worker_model_update.clone().unwrap_or(fallback);
+                    let message = if worker_model_update.is_some() {
+                        format!(
+                            "Worker model set to {display}. Start a new session (/new) to apply."
+                        )
+                    } else {
+                        format!(
+                            "Workers will inherit the manager model ({display}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if let Some(reasoning_update) = manager_reasoning
+                    && self.config.manager.manager_reasoning_effort != reasoning_update
+                {
+                    self.config.manager.manager_reasoning_effort = reasoning_update;
+                    let base_label = self
+                        .config
+                        .model_reasoning_effort
+                        .map(|eff| eff.to_string())
+                        .unwrap_or_else(|| "auto".to_string());
+                    let message = if let Some(effort) = reasoning_update {
+                        let label = effort.to_string();
+                        format!(
+                            "Manager reasoning set to {label}. Start a new session (/new) to apply."
+                        )
+                    } else {
+                        format!(
+                            "Manager now uses the session reasoning ({base_label}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if let Some(reasoning_update) = worker_reasoning
+                    && self.config.manager.worker_reasoning_effort != reasoning_update
+                {
+                    self.config.manager.worker_reasoning_effort = reasoning_update;
+                    let fallback_label = self
+                        .config
+                        .manager
+                        .manager_reasoning_effort
+                        .or(self.config.model_reasoning_effort)
+                        .map(|eff| eff.to_string())
+                        .unwrap_or_else(|| "auto".to_string());
+                    let message = if let Some(effort) = reasoning_update {
+                        let label = effort.to_string();
+                        format!(
+                            "Worker reasoning set to {label}. Start a new session (/new) to apply."
+                        )
+                    } else {
+                        format!(
+                            "Workers will inherit the manager reasoning ({fallback_label}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if persist
+                    && mutated
+                    && let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_profile(self.active_profile.as_deref())
+                        .set_manager_config(&self.config.manager)
+                        .apply()
+                        .await
+                {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to persist manager settings: {err}"));
                 }
             }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {

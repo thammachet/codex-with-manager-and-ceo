@@ -37,6 +37,7 @@ pub(crate) async fn run_codex_conversation_interactive(
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
     initial_history: Option<InitialHistory>,
+    sub_agent_source: SubAgentSource,
 ) -> Result<Codex, CodexErr> {
     let (tx_sub, rx_sub) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
     let (tx_ops, rx_ops) = async_channel::bounded(SUBMISSION_CHANNEL_CAPACITY);
@@ -45,7 +46,7 @@ pub(crate) async fn run_codex_conversation_interactive(
         config,
         auth_manager,
         initial_history.unwrap_or(InitialHistory::New),
-        SessionSource::SubAgent(SubAgentSource::Review),
+        SessionSource::SubAgent(sub_agent_source),
     )
     .await?;
     let codex = Arc::new(codex);
@@ -87,6 +88,7 @@ pub(crate) async fn run_codex_conversation_interactive(
 /// Convenience wrapper for one-time use with an initial prompt.
 ///
 /// Internally calls the interactive variant, then immediately submits the provided input.
+#[allow(clippy::too_many_arguments)]
 pub(crate) async fn run_codex_conversation_one_shot(
     config: Config,
     auth_manager: Arc<AuthManager>,
@@ -95,6 +97,7 @@ pub(crate) async fn run_codex_conversation_one_shot(
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
     initial_history: Option<InitialHistory>,
+    sub_agent_source: SubAgentSource,
 ) -> Result<Codex, CodexErr> {
     // Use a child token so we can stop the delegate after completion without
     // requiring the caller to cancel the parent token.
@@ -106,6 +109,7 @@ pub(crate) async fn run_codex_conversation_one_shot(
         parent_ctx,
         child_cancel.clone(),
         initial_history,
+        sub_agent_source.clone(),
     )
     .await?;
 

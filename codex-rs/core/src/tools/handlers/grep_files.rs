@@ -47,27 +47,27 @@ impl ToolHandler for GrepFilesHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "grep_files handler received unsupported payload".to_string(),
+                    "grep_files handler received unsupported payload".into(),
                 ));
             }
         };
 
         let args: GrepFilesArgs = serde_json::from_str(&arguments).map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to parse function arguments: {err:?}"
-            ))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err:?}").into(),
+            )
         })?;
 
         let pattern = args.pattern.trim();
         if pattern.is_empty() {
             return Err(FunctionCallError::RespondToModel(
-                "pattern must not be empty".to_string(),
+                "pattern must not be empty".into(),
             ));
         }
 
         if args.limit == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "limit must be greater than zero".to_string(),
+                "limit must be greater than zero".into(),
             ));
         }
 
@@ -92,12 +92,14 @@ impl ToolHandler for GrepFilesHandler {
                 content: "No matches found.".to_string(),
                 content_items: None,
                 success: Some(false),
+                history_content: None,
             })
         } else {
             Ok(ToolOutput::Function {
                 content: search_results.join("\n"),
                 content_items: None,
                 success: Some(true),
+                history_content: None,
             })
         }
     }
@@ -105,7 +107,9 @@ impl ToolHandler for GrepFilesHandler {
 
 async fn verify_path_exists(path: &Path) -> Result<(), FunctionCallError> {
     tokio::fs::metadata(path).await.map_err(|err| {
-        FunctionCallError::RespondToModel(format!("unable to access `{}`: {err}", path.display()))
+        FunctionCallError::RespondToModel(
+            format!("unable to access `{}`: {err}", path.display()).into(),
+        )
     })?;
     Ok(())
 }
@@ -134,13 +138,12 @@ async fn run_rg_search(
 
     let output = timeout(COMMAND_TIMEOUT, command.output())
         .await
-        .map_err(|_| {
-            FunctionCallError::RespondToModel("rg timed out after 30 seconds".to_string())
-        })?
+        .map_err(|_| FunctionCallError::RespondToModel("rg timed out after 30 seconds".into()))?
         .map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to launch rg: {err}. Ensure ripgrep is installed and on PATH."
-            ))
+            FunctionCallError::RespondToModel(
+                format!("failed to launch rg: {err}. Ensure ripgrep is installed and on PATH.")
+                    .into(),
+            )
         })?;
 
     match output.status.code() {
@@ -148,9 +151,9 @@ async fn run_rg_search(
         Some(1) => Ok(Vec::new()),
         _ => {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            Err(FunctionCallError::RespondToModel(format!(
-                "rg failed: {stderr}"
-            )))
+            Err(FunctionCallError::RespondToModel(
+                format!("rg failed: {stderr}").into(),
+            ))
         }
     }
 }

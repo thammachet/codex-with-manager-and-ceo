@@ -62,6 +62,7 @@ pub(crate) async fn process_items(
                     Err(err) => FunctionCallOutputPayload {
                         content: err.clone(),
                         success: Some(false),
+                        history_content: None,
                         ..Default::default()
                     },
                 };

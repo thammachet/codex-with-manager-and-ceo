@@ -57,15 +57,15 @@ impl ToolHandler for ListDirHandler {
             ToolPayload::Function { arguments } => arguments,
             _ => {
                 return Err(FunctionCallError::RespondToModel(
-                    "list_dir handler received unsupported payload".to_string(),
+                    "list_dir handler received unsupported payload".into(),
                 ));
             }
         };
 
         let args: ListDirArgs = serde_json::from_str(&arguments).map_err(|err| {
-            FunctionCallError::RespondToModel(format!(
-                "failed to parse function arguments: {err:?}"
-            ))
+            FunctionCallError::RespondToModel(
+                format!("failed to parse function arguments: {err:?}").into(),
+            )
         })?;
 
         let ListDirArgs {
@@ -77,26 +77,26 @@ impl ToolHandler for ListDirHandler {
 
         if offset == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "offset must be a 1-indexed entry number".to_string(),
+                "offset must be a 1-indexed entry number".into(),
             ));
         }
 
         if limit == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "limit must be greater than zero".to_string(),
+                "limit must be greater than zero".into(),
             ));
         }
 
         if depth == 0 {
             return Err(FunctionCallError::RespondToModel(
-                "depth must be greater than zero".to_string(),
+                "depth must be greater than zero".into(),
             ));
         }
 
         let path = PathBuf::from(&dir_path);
         if !path.is_absolute() {
             return Err(FunctionCallError::RespondToModel(
-                "dir_path must be an absolute path".to_string(),
+                "dir_path must be an absolute path".into(),
             ));
         }
 
@@ -108,6 +108,7 @@ impl ToolHandler for ListDirHandler {
             content: output.join("\n"),
             content_items: None,
             success: Some(true),
+            history_content: None,
         })
     }
 }
@@ -128,7 +129,7 @@ async fn list_dir_slice(
     let start_index = offset - 1;
     if start_index >= entries.len() {
         return Err(FunctionCallError::RespondToModel(
-            "offset exceeds directory entry count".to_string(),
+            "offset exceeds directory entry count".into(),
         ));
     }
 
@@ -161,16 +162,16 @@ async fn collect_entries(
 
     while let Some((current_dir, prefix, remaining_depth)) = queue.pop_front() {
         let mut read_dir = fs::read_dir(&current_dir).await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to read directory: {err}"))
+            FunctionCallError::RespondToModel(format!("failed to read directory: {err}").into())
         })?;
 
         let mut dir_entries = Vec::new();
 
         while let Some(entry) = read_dir.next_entry().await.map_err(|err| {
-            FunctionCallError::RespondToModel(format!("failed to read directory: {err}"))
+            FunctionCallError::RespondToModel(format!("failed to read directory: {err}").into())
         })? {
             let file_type = entry.file_type().await.map_err(|err| {
-                FunctionCallError::RespondToModel(format!("failed to inspect entry: {err}"))
+                FunctionCallError::RespondToModel(format!("failed to inspect entry: {err}").into())
             })?;
 
             let file_name = entry.file_name();
@@ -346,7 +347,7 @@ mod tests {
             .expect_err("offset exceeds entries");
         assert_eq!(
             err,
-            FunctionCallError::RespondToModel("offset exceeds directory entry count".to_string())
+            FunctionCallError::RespondToModel("offset exceeds directory entry count".into())
         );
     }
 

@@ -62,9 +62,29 @@ pub(crate) enum AppEvent {
         effort: Option<ReasoningEffort>,
     },
 
+    /// Apply manager/worker orchestration updates.
+    UpdateManagerSettings {
+        enabled: Option<bool>,
+        manager_model: Option<Option<String>>,
+        worker_model: Option<Option<String>>,
+        manager_reasoning: Option<Option<ReasoningEffort>>,
+        worker_reasoning: Option<Option<ReasoningEffort>>,
+        persist: bool,
+    },
+
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
         model: ModelPreset,
+    },
+
+    /// Open the manager/worker model picker.
+    OpenManagerModelPopup {
+        target: ManagerModelTarget,
+    },
+
+    /// Open the manager/worker reasoning picker.
+    OpenManagerReasoningPopup {
+        target: ManagerModelTarget,
     },
 
     /// Open the confirmation prompt before enabling full access mode.
@@ -162,4 +182,10 @@ pub(crate) enum FeedbackCategory {
     GoodResult,
     Bug,
     Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ManagerModelTarget {
+    Manager,
+    Worker,
 }

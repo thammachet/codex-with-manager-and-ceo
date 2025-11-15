@@ -57,6 +57,7 @@ use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
 use crate::config::Config;
+use crate::config::ManagerConfig;
 use crate::config::types::McpServerTransportConfig;
 use crate::config::types::ShellEnvironmentPolicy;
 use crate::context_manager::ContextManager;
@@ -69,6 +70,8 @@ use crate::exec::StreamOutput;
 // legacy normalize_exec_result no longer used after orchestrator migration
 use crate::compact::build_compacted_history;
 use crate::compact::collect_user_messages;
+use crate::manager_workers::ManagedWorker;
+use crate::manager_workers::ManagedWorkerRegistry;
 use crate::mcp::auth::compute_auth_statuses;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_family::find_family_for_model;
@@ -79,6 +82,8 @@ use crate::protocol::AgentReasoningSectionBreakEvent;
 use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
 use crate::protocol::BackgroundEventEvent;
+use crate::protocol::DelegateWorkerStatusEvent;
+use crate::protocol::DelegateWorkerStatusKind;
 use crate::protocol::DeprecationNoticeEvent;
 use crate::protocol::ErrorEvent;
 use crate::protocol::Event;
@@ -113,6 +118,7 @@ use crate::tools::ToolRouter;
 use crate::tools::context::SharedTurnDiffTracker;
 use crate::tools::parallel::ToolCallRuntime;
 use crate::tools::sandboxing::ApprovalStore;
+use crate::tools::spec::ToolMode;
 use crate::tools::spec::ToolsConfig;
 use crate::tools::spec::ToolsConfigParams;
 use crate::turn_diff_tracker::TurnDiffTracker;
@@ -142,6 +148,8 @@ pub struct Codex {
     pub(crate) rx_event: Receiver<Event>,
 }
 
+const MANAGER_PROMPT: &str = include_str!("../manager_prompt.md");
+
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
 /// the submission id for the initial `ConfigureSession` request and the
 /// unique session id.
@@ -168,20 +176,25 @@ impl Codex {
 
         let config = Arc::new(config);
 
+        let base_instructions = session_base_instructions(config.as_ref());
+        let developer_instructions = session_developer_instructions(config.as_ref());
+        let active_model = session_model(config.as_ref());
+        let active_effort = session_reasoning_effort(config.as_ref());
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
-            model: config.model.clone(),
-            model_reasoning_effort: config.model_reasoning_effort,
+            model: active_model,
+            model_reasoning_effort: active_effort,
             model_reasoning_summary: config.model_reasoning_summary,
-            developer_instructions: config.developer_instructions.clone(),
+            developer_instructions,
             user_instructions,
-            base_instructions: config.base_instructions.clone(),
+            base_instructions,
             compact_prompt: config.compact_prompt.clone(),
             approval_policy: config.approval_policy,
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
             features: config.features.clone(),
+            manager: config.manager.clone(),
             session_source,
         };
 
@@ -257,6 +270,7 @@ pub(crate) struct Session {
     pub(crate) active_turn: Mutex<Option<ActiveTurn>>,
     pub(crate) services: SessionServices,
     next_internal_sub_id: AtomicU64,
+    pub(crate) managed_workers: Mutex<ManagedWorkerRegistry>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -292,6 +306,52 @@ impl TurnContext {
         self.compact_prompt
             .as_deref()
             .unwrap_or(compact::SUMMARIZATION_PROMPT)
+    }
+}
+
+fn session_base_instructions(config: &Config) -> Option<String> {
+    config.base_instructions.clone()
+}
+
+fn session_developer_instructions(config: &Config) -> Option<String> {
+    let mut segments = Vec::new();
+    if config.manager.enabled {
+        segments.push(MANAGER_PROMPT.trim().to_string());
+    }
+    if let Some(dev) = config
+        .developer_instructions
+        .as_deref()
+        .filter(|s| !s.trim().is_empty())
+    {
+        segments.push(dev.to_string());
+    }
+    match segments.len() {
+        0 => None,
+        1 => Some(segments.remove(0)),
+        _ => Some(segments.join("\n\n")),
+    }
+}
+
+fn session_model(config: &Config) -> String {
+    if config.manager.enabled {
+        config
+            .manager
+            .manager_model
+            .clone()
+            .unwrap_or_else(|| config.model.clone())
+    } else {
+        config.model.clone()
+    }
+}
+
+fn session_reasoning_effort(config: &Config) -> Option<ReasoningEffortConfig> {
+    if config.manager.enabled {
+        config
+            .manager
+            .manager_reasoning_effort
+            .or(config.model_reasoning_effort)
+    } else {
+        config.model_reasoning_effort
     }
 }
 
@@ -335,6 +395,7 @@ pub(crate) struct SessionConfiguration {
 
     /// Set of feature flags for this session
     features: Features,
+    manager: ManagerConfig,
 
     // TODO(pakrym): Remove config from here
     original_config_do_not_use: Arc<Config>,
@@ -415,9 +476,15 @@ impl Session {
             session_configuration.session_source.clone(),
         );
 
+        let tool_mode = if session_configuration.manager.enabled {
+            ToolMode::Manager
+        } else {
+            ToolMode::Standard
+        };
         let tools_config = ToolsConfig::new(&ToolsConfigParams {
             model_family: &model_family,
             features: &config.features,
+            mode: tool_mode,
         });
 
         TurnContext {
@@ -609,6 +676,7 @@ impl Session {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -660,6 +728,36 @@ impl Session {
             .next_internal_sub_id
             .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         format!("auto-compact-{id}")
+    }
+
+    pub(crate) async fn allocate_worker_id(&self) -> String {
+        let mut guard = self.managed_workers.lock().await;
+        guard.allocate_id()
+    }
+
+    pub(crate) async fn insert_worker(&self, worker: Arc<ManagedWorker>) {
+        let mut guard = self.managed_workers.lock().await;
+        guard.insert(worker);
+    }
+
+    pub(crate) async fn get_worker(&self, worker_id: &str) -> Option<Arc<ManagedWorker>> {
+        let guard = self.managed_workers.lock().await;
+        guard.get(worker_id)
+    }
+
+    pub(crate) async fn remove_worker(&self, worker_id: &str) -> Option<Arc<ManagedWorker>> {
+        let mut guard = self.managed_workers.lock().await;
+        guard.remove(worker_id)
+    }
+
+    pub(crate) async fn shutdown_managed_workers(&self) {
+        let workers = {
+            let mut guard = self.managed_workers.lock().await;
+            guard.take_all()
+        };
+        for worker in workers {
+            worker.shutdown().await;
+        }
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -1177,6 +1275,23 @@ impl Session {
         self.send_event(turn_context, event).await;
     }
 
+    pub(crate) async fn notify_worker_status(
+        &self,
+        turn_context: &TurnContext,
+        worker_id: impl Into<String>,
+        worker_model: impl Into<String>,
+        status: DelegateWorkerStatusKind,
+        message: impl Into<String>,
+    ) {
+        let event = EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: worker_id.into(),
+            worker_model: worker_model.into(),
+            status,
+            message: message.into(),
+        });
+        self.send_event(turn_context, event).await;
+    }
+
     pub(crate) async fn notify_stream_error(
         &self,
         turn_context: &TurnContext,
@@ -1396,6 +1511,7 @@ async fn submission_loop(sess: Arc<Session>, config: Arc<Config>, rx_sub: Receiv
             _ => {} // Ignore unknown ops; enum is non_exhaustive to allow extensions.
         }
     }
+    sess.shutdown_managed_workers().await;
     debug!("Agent loop exited");
 }
 
@@ -1642,6 +1758,7 @@ mod handlers {
 
     pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
         sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
+        sess.shutdown_managed_workers().await;
         info!("Shutting down Codex instance");
 
         // Gracefully flush and shutdown rollout recorder on session end so tests
@@ -1710,6 +1827,7 @@ async fn spawn_review_thread(
     let tools_config = ToolsConfig::new(&ToolsConfigParams {
         model_family: &review_model_family,
         features: &review_features,
+        mode: ToolMode::Standard,
     });
 
     let base_instructions = REVIEW_PROMPT.to_string();
@@ -2153,6 +2271,7 @@ async fn try_run_turn(
                             call_id: String::new(),
                             output: FunctionCallOutputPayload {
                                 content: msg.to_string(),
+                                history_content: None,
                                 ..Default::default()
                             },
                         };
@@ -2161,12 +2280,26 @@ async fn try_run_turn(
                             response: Some(response),
                         });
                     }
-                    Err(FunctionCallError::RespondToModel(message))
-                    | Err(FunctionCallError::Denied(message)) => {
+                    Err(FunctionCallError::RespondToModel(message)) => {
+                        let response = ResponseInputItem::FunctionCallOutput {
+                            call_id: String::new(),
+                            output: FunctionCallOutputPayload {
+                                content: message.content,
+                                history_content: message.history_content,
+                                ..Default::default()
+                            },
+                        };
+                        add_completed(ProcessedResponseItem {
+                            item,
+                            response: Some(response),
+                        });
+                    }
+                    Err(FunctionCallError::Denied(message)) => {
                         let response = ResponseInputItem::FunctionCallOutput {
                             call_id: String::new(),
                             output: FunctionCallOutputPayload {
                                 content: message,
+                                history_content: None,
                                 ..Default::default()
                             },
                         };
@@ -2416,6 +2549,7 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Arc;
     use std::time::Duration as StdDuration;
+    use tempfile::tempdir;
 
     #[test]
     fn reconstruct_history_matches_live_compactions() {
@@ -2457,6 +2591,43 @@ mod tests {
             session.state.lock().await.clone_history().get_history()
         });
         assert_eq!(expected, actual);
+    }
+
+    #[test]
+    fn manager_prompt_moves_to_developer_instructions() {
+        let codex_home = tempdir().expect("create temp dir");
+        let mut config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("load default config");
+        config.manager.enabled = true;
+
+        assert!(session_base_instructions(&config).is_none());
+        let developer = session_developer_instructions(&config).expect("developer instructions");
+        assert!(developer.contains(MANAGER_PROMPT.trim()));
+    }
+
+    #[test]
+    fn custom_developer_instructions_append_after_manager_prompt() {
+        let codex_home = tempdir().expect("create temp dir");
+        let mut config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("load default config");
+        config.manager.enabled = true;
+        config.developer_instructions = Some("custom developer".to_string());
+        config.base_instructions = Some("custom base".to_string());
+
+        let developer = session_developer_instructions(&config).expect("developer instructions");
+        assert!(developer.contains(MANAGER_PROMPT.trim()));
+        assert!(developer.contains("custom developer"));
+
+        let base = session_base_instructions(&config).expect("base override");
+        assert_eq!(base, "custom base");
     }
 
     #[test]
@@ -2598,20 +2769,25 @@ mod tests {
             config.cli_auth_credentials_store_mode,
         );
 
+        let base_instructions = session_base_instructions(config.as_ref());
+        let developer_instructions = session_developer_instructions(config.as_ref());
+        let active_model = session_model(config.as_ref());
+        let active_effort = session_reasoning_effort(config.as_ref());
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
-            model: config.model.clone(),
-            model_reasoning_effort: config.model_reasoning_effort,
+            model: active_model,
+            model_reasoning_effort: active_effort,
             model_reasoning_summary: config.model_reasoning_summary,
-            developer_instructions: config.developer_instructions.clone(),
+            developer_instructions,
             user_instructions: config.user_instructions.clone(),
-            base_instructions: config.base_instructions.clone(),
+            base_instructions,
             compact_prompt: config.compact_prompt.clone(),
             approval_policy: config.approval_policy,
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
             features: Features::default(),
+            manager: config.manager.clone(),
             session_source: SessionSource::Exec,
         };
 
@@ -2645,6 +2821,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
         };
 
         (session, turn_context)
@@ -2674,20 +2851,25 @@ mod tests {
             config.cli_auth_credentials_store_mode,
         );
 
+        let base_instructions = session_base_instructions(config.as_ref());
+        let developer_instructions = session_developer_instructions(config.as_ref());
+        let active_model = session_model(config.as_ref());
+        let active_effort = session_reasoning_effort(config.as_ref());
         let session_configuration = SessionConfiguration {
             provider: config.model_provider.clone(),
-            model: config.model.clone(),
-            model_reasoning_effort: config.model_reasoning_effort,
+            model: active_model,
+            model_reasoning_effort: active_effort,
             model_reasoning_summary: config.model_reasoning_summary,
-            developer_instructions: config.developer_instructions.clone(),
+            developer_instructions,
             user_instructions: config.user_instructions.clone(),
-            base_instructions: config.base_instructions.clone(),
+            base_instructions,
             compact_prompt: config.compact_prompt.clone(),
             approval_policy: config.approval_policy,
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
             features: Features::default(),
+            manager: config.manager.clone(),
             session_source: SessionSource::Exec,
         };
 
@@ -2721,6 +2903,7 @@ mod tests {
             active_turn: Mutex::new(None),
             services,
             next_internal_sub_id: AtomicU64::new(0),
+            managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
         });
 
         (session, turn_context, rx_event)
@@ -3087,7 +3270,7 @@ mod tests {
             policy = turn_context.approval_policy
         );
 
-        pretty_assertions::assert_eq!(output, expected);
+        pretty_assertions::assert_eq!(output.content, expected);
 
         // Now retry the same command WITHOUT escalated permissions; should succeed.
         // Force DangerFullAccess to avoid platform sandbox dependencies in tests.
@@ -3177,7 +3360,7 @@ mod tests {
             policy = turn_context.approval_policy
         );
 
-        pretty_assertions::assert_eq!(output, expected);
+        pretty_assertions::assert_eq!(output.content, expected);
     }
 
     #[test]

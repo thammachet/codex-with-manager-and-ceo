@@ -1,0 +1,11 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+ROOT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+
+# Run the Codex binary from the Rust workspace, but keep the caller's
+# current working directory so Codex operates on the project where
+# you invoked `c-codex`.
+cargo run \
+  --manifest-path "$ROOT_DIR/codex-rs/Cargo.toml" \
+  --bin codex -- "$@"
