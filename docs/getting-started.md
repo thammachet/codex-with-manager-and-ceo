@@ -100,6 +100,8 @@ Need a planning layer that can break big requests into smaller sub-tasks? Launch
 
 Each worker run returns a `Worker ID: worker-#` line. Include that ID plus `"action": "message"` the next time you call `delegate_worker` to resume the same worker (for example, `{"worker_id":"worker-3","action":"message","objective":"Answer this follow-up"}`). When you're done with a worker, send `{ "worker_id": "worker-3", "action": "close" }` so its resources are released.
 
+Need to fan out multiple subtasks in parallel? Pass `"blocking": false` when starting or messaging a worker to kick off a turn asynchronously. The manager can immediately issue more `delegate_worker` calls (even to brand-new workers) while those turns run concurrently. When you're ready to collect the result, send `{ "worker_id": "worker-3", "action": "await" }`. Use `{ "worker_id": "worker-3", "action": "status" }` for a quick progress snapshot without waiting for completion. Always `await` a worker's pending turn before sending its next objective.
+
 While the manager is waiting on a worker, the status indicator in the bottom pane now shows live updates such as "Running cargo test" or "Calling tool my_server.my_tool" so you can confirm the worker is still progressing without flooding the transcript.
 
 #### Shell completions

@@ -88,6 +88,8 @@ worker_reasoning_effort = "medium"   # optional; workers fall back to the manage
 
 Every worker response now includes `Worker ID: worker-#`. Supply that ID plus `action = "message"` and a new `objective` in the next `delegate_worker` call to resume the same worker, or `action = "close"` to release it explicitly.
 
+- Use `blocking = false` when launching or messaging a worker to let that turn run asynchronously while you dispatch additional `delegate_worker` calls. Finish the turn later with `action = "await"` and check in without blocking via `action = "status"`. Always `await` a pending turn before sending the worker another objective.
+
 ### model_providers
 
 This option lets you add to the default set of model providers bundled with Codex. The map key becomes the value you use with `model_provider` to select the provider.

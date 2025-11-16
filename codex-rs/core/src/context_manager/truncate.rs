@@ -2,8 +2,6 @@ use codex_protocol::models::FunctionCallOutputContentItem;
 use codex_utils_string::take_bytes_at_char_boundary;
 use codex_utils_string::take_last_bytes_at_char_boundary;
 
-use crate::util::error_or_panic;
-
 // Model-formatting limits: clients get full streams; only content sent to the model is truncated.
 pub const MODEL_FORMAT_MAX_BYTES: usize = 10 * 1024; // 10 KiB
 pub const MODEL_FORMAT_MAX_LINES: usize = 256; // lines
@@ -60,6 +58,9 @@ pub(crate) fn format_output_for_model_body(
     limit_bytes: usize,
     limit_lines: usize,
 ) -> String {
+    if is_preformatted_truncation(content) {
+        return content.to_string();
+    }
     // Head+tail truncation for the model: show the beginning and end with an elision.
     // Clients still receive full streams; only this formatted summary is capped.
     let total_lines = content.lines().count();
@@ -76,7 +77,9 @@ fn truncate_formatted_exec_output(
     limit_bytes: usize,
     limit_lines: usize,
 ) -> String {
-    debug_panic_on_double_truncation(content);
+    if is_preformatted_truncation(content) {
+        return content.to_string();
+    }
     let head_lines: usize = limit_lines / 2;
     let tail_lines: usize = limit_lines - head_lines; // 128
     let head_bytes: usize = limit_bytes / 2;
@@ -139,10 +142,7 @@ fn truncate_formatted_exec_output(
     result
 }
 
-fn debug_panic_on_double_truncation(content: &str) {
-    if content.contains("Total output lines:") && content.contains("omitted") {
-        error_or_panic(format!(
-            "FunctionCallOutput content was already truncated before ContextManager::record_items; this would cause double truncation {content}"
-        ));
-    }
+fn is_preformatted_truncation(content: &str) -> bool {
+    content.starts_with("Total output lines: ")
+        && (content.contains("[... omitted ") || content.contains("[... output truncated"))
 }

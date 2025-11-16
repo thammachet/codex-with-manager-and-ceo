@@ -231,6 +231,58 @@ fn delegate_worker_status_updates_status_header() {
     );
 }
 
+#[test]
+fn delegate_worker_status_multiple_workers_show_aggregate() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "turn".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-1".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-7".to_string(),
+            worker_model: "gpt-test".to_string(),
+            status: DelegateWorkerStatusKind::Running,
+            message: "Thinking hard".to_string(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-2".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-8".to_string(),
+            worker_model: "gpt-test".to_string(),
+            status: DelegateWorkerStatusKind::RunningTool,
+            message: "Calling tool".to_string(),
+        }),
+    });
+
+    assert!(
+        chat.current_status_header.contains("2 workers running"),
+        "expected aggregate header when multiple workers active"
+    );
+
+    chat.handle_codex_event(Event {
+        id: "status-3".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-7".to_string(),
+            worker_model: "gpt-test".to_string(),
+            status: DelegateWorkerStatusKind::Completed,
+            message: "All done".to_string(),
+        }),
+    });
+
+    assert!(
+        chat.current_status_header.contains("worker-8"),
+        "expected header to show remaining worker"
+    );
+}
+
 /// Entering review mode uses the hint provided by the review request.
 #[test]
 fn entered_review_mode_uses_request_hint() {
@@ -371,6 +423,7 @@ fn make_chatwidget_manual() -> (
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
         current_status_header: String::from("Working"),
+        worker_statuses: HashMap::new(),
         retry_status_header: None,
         conversation_id: None,
         frame_requester: FrameRequester::test_dummy(),

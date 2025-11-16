@@ -268,6 +268,7 @@ pub(crate) struct ChatWidget {
     full_reasoning_buffer: String,
     // Current status header shown in the status indicator.
     current_status_header: String,
+    worker_statuses: HashMap<String, String>,
     // Previous status header to restore after a transient stream retry.
     retry_status_header: Option<String>,
     conversation_id: Option<ConversationId>,
@@ -350,6 +351,32 @@ impl ChatWidget {
     fn set_status_header(&mut self, header: String) {
         self.current_status_header = header.clone();
         self.bottom_pane.update_status_header(header);
+    }
+
+    fn refresh_worker_status_header(&mut self) {
+        if self.worker_statuses.is_empty() {
+            return;
+        }
+        let mut entries: Vec<_> = self.worker_statuses.iter().collect();
+        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
+        if entries.len() == 1 {
+            let (worker_id, message) = entries[0];
+            let header = format!("{message} · {worker_id}");
+            self.set_status_header(header);
+            return;
+        }
+        let preview: Vec<String> = entries
+            .into_iter()
+            .take(2)
+            .map(|(worker_id, message)| format!("{message} · {worker_id}"))
+            .collect();
+        let header = format!(
+            "{} workers running · {}",
+            self.worker_statuses.len(),
+            preview.join(", "),
+        );
+        let truncated = truncate_text(&header, 80);
+        self.set_status_header(truncated);
     }
 
     // --- Small event handlers ---
@@ -744,6 +771,7 @@ impl ChatWidget {
 
     fn on_delegate_worker_status(&mut self, event: DelegateWorkerStatusEvent) {
         if !self.bottom_pane.is_task_running() {
+            self.worker_statuses.clear();
             return;
         }
         let mut label = event.message.trim().to_string();
@@ -751,8 +779,23 @@ impl ChatWidget {
             label = worker_status_label(event.status).to_string();
         }
         let truncated = truncate_text(&label, 64);
-        let header = format!("{truncated} · {}", event.worker_id);
-        self.set_status_header(header);
+        let is_terminal = matches!(
+            event.status,
+            DelegateWorkerStatusKind::Completed | DelegateWorkerStatusKind::Failed
+        );
+        if is_terminal {
+            self.worker_statuses.remove(&event.worker_id);
+            if self.worker_statuses.is_empty() {
+                let header = format!("{truncated} · {}", event.worker_id);
+                self.set_status_header(header);
+            } else {
+                self.refresh_worker_status_header();
+            }
+        } else {
+            self.worker_statuses
+                .insert(event.worker_id.clone(), truncated);
+            self.refresh_worker_status_header();
+        }
         self.request_redraw();
     }
 
@@ -1076,6 +1119,7 @@ impl ChatWidget {
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
+            worker_statuses: HashMap::new(),
             retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
@@ -1143,6 +1187,7 @@ impl ChatWidget {
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
+            worker_statuses: HashMap::new(),
             retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),

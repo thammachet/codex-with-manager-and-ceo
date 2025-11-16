@@ -1,4 +1,3 @@
-use std::fmt;
 use std::sync::Arc;
 use std::time::Duration;
 use std::time::Instant;
@@ -16,6 +15,8 @@ use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::TaskStartedEvent;
 use codex_protocol::user_input::UserInput;
 use serde::Deserialize;
+use tokio::sync::Mutex;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
 
 use crate::AuthManager;
@@ -24,6 +25,9 @@ use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_interactive;
 use crate::function_tool::FunctionCallError;
 use crate::manager_workers::ManagedWorker;
+use crate::manager_workers::WorkerAction;
+use crate::manager_workers::WorkerRunHandle;
+use crate::manager_workers::WorkerRunSummary;
 use crate::tools::context::ToolInvocation;
 use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
@@ -33,27 +37,6 @@ use crate::tools::registry::ToolKind;
 use crate::error::CodexErr;
 
 pub struct DelegateWorkerHandler;
-
-#[derive(Debug, Clone, Copy, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-#[derive(Default)]
-enum WorkerAction {
-    #[default]
-    Start,
-    Message,
-    Close,
-}
-
-impl fmt::Display for WorkerAction {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let label = match self {
-            WorkerAction::Start => "start",
-            WorkerAction::Message => "message",
-            WorkerAction::Close => "close",
-        };
-        f.write_str(label)
-    }
-}
 
 #[derive(Debug, Deserialize)]
 struct DelegateWorkerArgs {
@@ -67,55 +50,8 @@ struct DelegateWorkerArgs {
     worker_id: Option<String>,
     #[serde(default)]
     action: WorkerAction,
-}
-
-struct WorkerRunSummary {
-    worker_id: String,
-    objective: String,
-    worker_model: String,
-    action: WorkerAction,
-    last_message: Option<String>,
-    aborted_reason: Option<String>,
-    completed: bool,
-    diff_count: usize,
-    errors: Vec<String>,
-    worker_active: bool,
-}
-
-impl WorkerRunSummary {
-    fn new(
-        worker_id: String,
-        objective: String,
-        worker_model: String,
-        action: WorkerAction,
-    ) -> Self {
-        Self {
-            worker_id,
-            objective,
-            worker_model,
-            action,
-            last_message: None,
-            aborted_reason: None,
-            completed: false,
-            diff_count: 0,
-            errors: Vec::new(),
-            worker_active: true,
-        }
-    }
-
-    fn status_line(&self) -> String {
-        if let Some(reason) = &self.aborted_reason {
-            format!("failed ({reason})")
-        } else if self.completed {
-            "completed".to_string()
-        } else {
-            "incomplete".to_string()
-        }
-    }
-
-    fn success(&self) -> bool {
-        self.aborted_reason.is_none() && self.completed
-    }
+    #[serde(default)]
+    blocking: Option<bool>,
 }
 
 const WORKER_STATUS_MIN_INTERVAL: Duration = Duration::from_millis(750);
@@ -186,6 +122,42 @@ impl WorkerStatusEmitter {
     }
 }
 
+enum WorkerCompletionHook {
+    Start {
+        session: Arc<Session>,
+        worker: Arc<ManagedWorker>,
+    },
+    Resume {
+        session: Arc<Session>,
+        worker: Arc<ManagedWorker>,
+        worker_id: String,
+    },
+}
+
+impl WorkerCompletionHook {
+    async fn on_completion(&self, worker_active: bool) {
+        match self {
+            WorkerCompletionHook::Start { session, worker } => {
+                if worker_active {
+                    session.insert_worker(Arc::clone(worker)).await;
+                } else {
+                    worker.shutdown().await;
+                }
+            }
+            WorkerCompletionHook::Resume {
+                session,
+                worker,
+                worker_id,
+            } => {
+                if !worker_active {
+                    session.remove_worker(worker_id).await;
+                    worker.shutdown().await;
+                }
+            }
+        }
+    }
+}
+
 fn parse_args(payload: &ToolPayload) -> Result<DelegateWorkerArgs, FunctionCallError> {
     if let ToolPayload::Function { arguments } = payload {
         let mut parsed: DelegateWorkerArgs = serde_json::from_str(arguments).map_err(|err| {
@@ -219,10 +191,17 @@ fn parse_args(payload: &ToolPayload) -> Result<DelegateWorkerArgs, FunctionCallE
                     ));
                 }
             }
-            WorkerAction::Close => {}
+            WorkerAction::Close | WorkerAction::Await | WorkerAction::Status => {}
         }
 
-        if parsed.action != WorkerAction::Start && parsed.worker_id.is_none() {
+        if matches!(
+            parsed.action,
+            WorkerAction::Message
+                | WorkerAction::Close
+                | WorkerAction::Await
+                | WorkerAction::Status
+        ) && parsed.worker_id.is_none()
+        {
             return Err(FunctionCallError::RespondToModel(
                 "delegate_worker requires worker_id when messaging or closing a worker".into(),
             ));
@@ -291,6 +270,56 @@ fn format_summary(summary: &WorkerRunSummary) -> String {
     lines.join("\n")
 }
 
+fn summary_output(summary: WorkerRunSummary) -> ToolOutput {
+    ToolOutput::Function {
+        content: format_summary(&summary),
+        content_items: None,
+        success: Some(summary.success()),
+        history_content: None,
+    }
+}
+
+fn spawn_worker_run(
+    worker: Arc<ManagedWorker>,
+    session: Arc<Session>,
+    turn: Arc<TurnContext>,
+    input: Vec<UserInput>,
+    summary: Arc<Mutex<WorkerRunSummary>>,
+    status_emitter: WorkerStatusEmitter,
+    completion_hook: WorkerCompletionHook,
+) -> WorkerRunHandle {
+    let (tx, rx) = oneshot::channel();
+    let summary_for_task = Arc::clone(&summary);
+    let summary_for_completion = Arc::clone(&summary);
+    let summary_for_result = Arc::clone(&summary);
+    let join_handle = tokio::spawn(async move {
+        let result = run_worker_turn(
+            Arc::clone(&worker),
+            Arc::clone(&session),
+            Arc::clone(&turn),
+            input,
+            summary_for_task,
+            status_emitter,
+        )
+        .await;
+        let final_result = match result {
+            Ok(worker_active) => {
+                {
+                    let mut guard = summary_for_completion.lock().await;
+                    guard.worker_active = worker_active;
+                }
+                completion_hook.on_completion(worker_active).await;
+                let guard = summary_for_result.lock().await;
+                Ok(guard.clone())
+            }
+            Err(err) => Err(err),
+        };
+        let _ = tx.send(final_result);
+    });
+
+    WorkerRunHandle::new(summary, rx, join_handle)
+}
+
 #[async_trait]
 impl ToolHandler for DelegateWorkerHandler {
     fn kind(&self) -> ToolKind {
@@ -307,17 +336,28 @@ impl ToolHandler for DelegateWorkerHandler {
 
         let args = parse_args(&payload)?;
 
+        let blocking = args.blocking.unwrap_or(true);
+
         let output = match args.action {
             WorkerAction::Start => {
                 let auth_manager = turn.client.get_auth_manager().ok_or_else(|| {
                     FunctionCallError::Fatal("missing auth manager for worker".to_string())
                 })?;
-                start_worker(Arc::clone(&session), Arc::clone(&turn), &args, auth_manager).await?
+                start_worker(
+                    Arc::clone(&session),
+                    Arc::clone(&turn),
+                    &args,
+                    auth_manager,
+                    blocking,
+                )
+                .await?
             }
             WorkerAction::Message => {
-                resume_worker(Arc::clone(&session), Arc::clone(&turn), &args).await?
+                resume_worker(Arc::clone(&session), Arc::clone(&turn), &args, blocking).await?
             }
             WorkerAction::Close => close_worker(Arc::clone(&session), &args).await?,
+            WorkerAction::Await => await_worker(Arc::clone(&session), &args).await?,
+            WorkerAction::Status => worker_status(Arc::clone(&session), &args).await?,
         };
 
         Ok(output)
@@ -329,6 +369,7 @@ async fn start_worker(
     turn: Arc<TurnContext>,
     args: &DelegateWorkerArgs,
     auth_manager: Arc<AuthManager>,
+    blocking: bool,
 ) -> Result<ToolOutput, FunctionCallError> {
     let mut worker_config = (*turn.client.config()).clone();
     worker_config.manager.enabled = false;
@@ -372,12 +413,12 @@ async fn start_worker(
     let objective = args.objective.clone().unwrap_or_default();
     let objective_preview = truncate_preview(&objective, 80);
     let input = build_worker_input(&objective, args.context.as_deref());
-    let mut summary = WorkerRunSummary::new(
+    let summary = Arc::new(Mutex::new(WorkerRunSummary::new(
         worker_id.clone(),
         objective,
         worker_model,
         WorkerAction::Start,
-    );
+    )));
     let mut status_emitter = WorkerStatusEmitter::new(
         Arc::clone(&session),
         Arc::clone(&turn),
@@ -390,37 +431,57 @@ async fn start_worker(
             format!("Starting worker for {objective_preview}"),
         )
         .await;
-    let worker_active = run_worker_turn(
+
+    if blocking {
+        let worker_active = run_worker_turn(
+            Arc::clone(&worker),
+            Arc::clone(&session),
+            Arc::clone(&turn),
+            input,
+            Arc::clone(&summary),
+            status_emitter,
+        )
+        .await?;
+        {
+            let mut guard = summary.lock().await;
+            guard.worker_active = worker_active;
+        }
+        if worker_active {
+            session.insert_worker(Arc::clone(&worker)).await;
+        } else {
+            worker.shutdown().await;
+        }
+        let summary_value = summary.lock().await.clone();
+        return Ok(summary_output(summary_value));
+    }
+
+    let handle = spawn_worker_run(
         Arc::clone(&worker),
         Arc::clone(&session),
         Arc::clone(&turn),
         input,
-        &mut summary,
-        &mut status_emitter,
-    )
-    .await?;
-    summary.worker_active = worker_active;
-
-    if worker_active {
-        session.insert_worker(worker).await;
-    } else {
-        worker.shutdown().await;
-    }
-
-    Ok(ToolOutput::Function {
-        content: format_summary(&summary),
-        content_items: None,
-        success: Some(summary.success()),
-        history_content: None,
-    })
+        Arc::clone(&summary),
+        status_emitter,
+        WorkerCompletionHook::Start {
+            session: Arc::clone(&session),
+            worker: Arc::clone(&worker),
+        },
+    );
+    session.insert_worker_run(worker_id.clone(), handle).await;
+    let summary_value = summary.lock().await.clone();
+    Ok(summary_output(summary_value))
 }
 
 async fn resume_worker(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     args: &DelegateWorkerArgs,
+    blocking: bool,
 ) -> Result<ToolOutput, FunctionCallError> {
     let worker_id = worker_id_or_bug(args)?;
+    if session.worker_has_pending_run(&worker_id).await {
+        return Err(worker_has_pending_run(&worker_id));
+    }
     let worker = session
         .get_worker(&worker_id)
         .await
@@ -434,12 +495,12 @@ async fn resume_worker(
     let objective = args.objective.clone().unwrap_or_default();
     let objective_preview = truncate_preview(&objective, 80);
     let input = build_worker_input(&objective, args.context.as_deref());
-    let mut summary = WorkerRunSummary::new(
+    let summary = Arc::new(Mutex::new(WorkerRunSummary::new(
         worker_id.clone(),
         objective,
         worker.model.clone(),
         WorkerAction::Message,
-    );
+    )));
     let mut status_emitter = WorkerStatusEmitter::new(
         Arc::clone(&session),
         Arc::clone(&turn),
@@ -452,27 +513,45 @@ async fn resume_worker(
             format!("Resuming worker for {objective_preview}"),
         )
         .await;
-    let worker_active = run_worker_turn(
+
+    if blocking {
+        let worker_active = run_worker_turn(
+            Arc::clone(&worker),
+            Arc::clone(&session),
+            Arc::clone(&turn),
+            input,
+            Arc::clone(&summary),
+            status_emitter,
+        )
+        .await?;
+        {
+            let mut guard = summary.lock().await;
+            guard.worker_active = worker_active;
+        }
+        if !worker_active {
+            session.remove_worker(&worker_id).await;
+            worker.shutdown().await;
+        }
+        let summary_value = summary.lock().await.clone();
+        return Ok(summary_output(summary_value));
+    }
+
+    let handle = spawn_worker_run(
         Arc::clone(&worker),
         Arc::clone(&session),
         Arc::clone(&turn),
         input,
-        &mut summary,
-        &mut status_emitter,
-    )
-    .await?;
-    summary.worker_active = worker_active;
-    if !worker_active {
-        session.remove_worker(&worker_id).await;
-        worker.shutdown().await;
-    }
-
-    Ok(ToolOutput::Function {
-        content: format_summary(&summary),
-        content_items: None,
-        success: Some(summary.success()),
-        history_content: None,
-    })
+        Arc::clone(&summary),
+        status_emitter,
+        WorkerCompletionHook::Resume {
+            session: Arc::clone(&session),
+            worker: Arc::clone(&worker),
+            worker_id: worker_id.clone(),
+        },
+    );
+    session.insert_worker_run(worker_id.clone(), handle).await;
+    let summary_value = summary.lock().await.clone();
+    Ok(summary_output(summary_value))
 }
 
 async fn close_worker(
@@ -480,6 +559,9 @@ async fn close_worker(
     args: &DelegateWorkerArgs,
 ) -> Result<ToolOutput, FunctionCallError> {
     let worker_id = worker_id_or_bug(args)?;
+    if let Some(run) = session.take_worker_run(&worker_id).await {
+        let _ = run.wait().await;
+    }
     let worker = session
         .remove_worker(&worker_id)
         .await
@@ -495,12 +577,33 @@ async fn close_worker(
     summary.worker_active = false;
     summary.completed = true;
 
-    Ok(ToolOutput::Function {
-        content: format_summary(&summary),
-        content_items: None,
-        success: Some(true),
-        history_content: None,
-    })
+    Ok(summary_output(summary))
+}
+
+async fn await_worker(
+    session: Arc<Session>,
+    args: &DelegateWorkerArgs,
+) -> Result<ToolOutput, FunctionCallError> {
+    let worker_id = worker_id_or_bug(args)?;
+    let handle = session
+        .take_worker_run(&worker_id)
+        .await
+        .ok_or_else(|| no_pending_run(&worker_id))?;
+    let summary = handle.wait().await?;
+    Ok(summary_output(summary))
+}
+
+async fn worker_status(
+    session: Arc<Session>,
+    args: &DelegateWorkerArgs,
+) -> Result<ToolOutput, FunctionCallError> {
+    let worker_id = worker_id_or_bug(args)?;
+    let summary = session
+        .worker_run_summary(&worker_id)
+        .await
+        .ok_or_else(|| no_pending_run(&worker_id))?;
+    let summary_value = summary.lock().await.clone();
+    Ok(summary_output(summary_value))
 }
 
 async fn run_worker_turn(
@@ -508,8 +611,8 @@ async fn run_worker_turn(
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     input: Vec<UserInput>,
-    summary: &mut WorkerRunSummary,
-    status_emitter: &mut WorkerStatusEmitter,
+    summary: Arc<Mutex<WorkerRunSummary>>,
+    mut status_emitter: WorkerStatusEmitter,
 ) -> Result<bool, FunctionCallError> {
     let _permit = worker
         .acquire()
@@ -536,8 +639,11 @@ async fn run_worker_turn(
                         .await;
                 }
                 EventMsg::TaskComplete(task) => {
-                    summary.last_message = task.last_agent_message;
-                    summary.completed = true;
+                    {
+                        let mut guard = summary.lock().await;
+                        guard.last_message = task.last_agent_message;
+                        guard.completed = true;
+                    }
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Completed,
@@ -547,7 +653,10 @@ async fn run_worker_turn(
                     return Ok(true);
                 }
                 EventMsg::TurnAborted(aborted) => {
-                    summary.aborted_reason = Some(format!("{:?}", aborted.reason));
+                    {
+                        let mut guard = summary.lock().await;
+                        guard.aborted_reason = Some(format!("{:?}", aborted.reason));
+                    }
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Failed,
@@ -557,7 +666,10 @@ async fn run_worker_turn(
                     return Ok(false);
                 }
                 EventMsg::Error(err) => {
-                    summary.errors.push(err.message.clone());
+                    {
+                        let mut guard = summary.lock().await;
+                        guard.errors.push(err.message.clone());
+                    }
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Warning,
@@ -566,14 +678,18 @@ async fn run_worker_turn(
                         .await;
                 }
                 EventMsg::TurnDiff(diff) => {
-                    summary.diff_count += 1;
+                    let diff_index = {
+                        let mut guard = summary.lock().await;
+                        guard.diff_count += 1;
+                        guard.diff_count
+                    };
                     session
                         .send_event(turn.as_ref(), EventMsg::TurnDiff(diff))
                         .await;
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::DiffApplied,
-                            format!("Applied diff #{:02}", summary.diff_count),
+                            format!("Applied diff #{diff_index:02}"),
                         )
                         .await;
                 }
@@ -609,7 +725,10 @@ async fn run_worker_turn(
                 _ => {}
             },
             Err(CodexErr::InternalAgentDied) => {
-                summary.aborted_reason = Some("worker exited unexpectedly".to_string());
+                {
+                    let mut guard = summary.lock().await;
+                    guard.aborted_reason = Some("worker exited unexpectedly".to_string());
+                }
                 status_emitter
                     .emit(
                         DelegateWorkerStatusKind::Failed,
@@ -636,6 +755,24 @@ async fn run_worker_turn(
 fn worker_not_found(worker_id: &str) -> FunctionCallError {
     FunctionCallError::RespondToModel(
         format!("worker `{worker_id}` is not active. Start a new worker instead.").into(),
+    )
+}
+
+fn worker_has_pending_run(worker_id: &str) -> FunctionCallError {
+    FunctionCallError::RespondToModel(
+        format!(
+            "worker `{worker_id}` already has a request in flight. Call delegate_worker with action:\"await\" to collect the result before sending another objective."
+        )
+        .into(),
+    )
+}
+
+fn no_pending_run(worker_id: &str) -> FunctionCallError {
+    FunctionCallError::RespondToModel(
+        format!(
+            "worker `{worker_id}` has no pending asynchronous turn. Start a new objective with blocking:false before awaiting."
+        )
+        .into(),
     )
 }
 
@@ -743,6 +880,28 @@ mod tests {
     #[test]
     fn message_requires_worker_id() {
         let err = parse(r#"{"action":"message","objective":"hi"}"#).unwrap_err();
+        match err {
+            FunctionCallError::RespondToModel(msg) => {
+                assert!(msg.content.contains("worker_id"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn await_requires_worker_id() {
+        let err = parse(r#"{"action":"await"}"#).unwrap_err();
+        match err {
+            FunctionCallError::RespondToModel(msg) => {
+                assert!(msg.content.contains("worker_id"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn status_requires_worker_id() {
+        let err = parse(r#"{"action":"status"}"#).unwrap_err();
         match err {
             FunctionCallError::RespondToModel(msg) => {
                 assert!(msg.content.contains("worker_id"));

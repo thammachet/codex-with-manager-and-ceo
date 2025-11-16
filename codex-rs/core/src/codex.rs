@@ -72,6 +72,8 @@ use crate::compact::build_compacted_history;
 use crate::compact::collect_user_messages;
 use crate::manager_workers::ManagedWorker;
 use crate::manager_workers::ManagedWorkerRegistry;
+use crate::manager_workers::WorkerRunHandle;
+use crate::manager_workers::WorkerRunSummary;
 use crate::mcp::auth::compute_auth_statuses;
 use crate::mcp_connection_manager::McpConnectionManager;
 use crate::model_family::find_family_for_model;
@@ -271,6 +273,7 @@ pub(crate) struct Session {
     pub(crate) services: SessionServices,
     next_internal_sub_id: AtomicU64,
     pub(crate) managed_workers: Mutex<ManagedWorkerRegistry>,
+    pub(crate) worker_runs: Mutex<HashMap<String, WorkerRunHandle>>,
 }
 
 /// The context needed for a single turn of the conversation.
@@ -677,6 +680,7 @@ impl Session {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
+            worker_runs: Mutex::new(HashMap::new()),
         });
 
         // Dispatch the SessionConfiguredEvent first and then report any errors.
@@ -755,9 +759,39 @@ impl Session {
             let mut guard = self.managed_workers.lock().await;
             guard.take_all()
         };
+        let pending_runs = {
+            let mut guard = self.worker_runs.lock().await;
+            guard.drain().map(|(_, run)| run).collect::<Vec<_>>()
+        };
+        for run in pending_runs {
+            let _ = run.wait().await;
+        }
         for worker in workers {
             worker.shutdown().await;
         }
+    }
+
+    pub(crate) async fn worker_has_pending_run(&self, worker_id: &str) -> bool {
+        let guard = self.worker_runs.lock().await;
+        guard.contains_key(worker_id)
+    }
+
+    pub(crate) async fn insert_worker_run(&self, worker_id: String, handle: WorkerRunHandle) {
+        let mut guard = self.worker_runs.lock().await;
+        guard.insert(worker_id, handle);
+    }
+
+    pub(crate) async fn take_worker_run(&self, worker_id: &str) -> Option<WorkerRunHandle> {
+        let mut guard = self.worker_runs.lock().await;
+        guard.remove(worker_id)
+    }
+
+    pub(crate) async fn worker_run_summary(
+        &self,
+        worker_id: &str,
+    ) -> Option<Arc<Mutex<WorkerRunSummary>>> {
+        let guard = self.worker_runs.lock().await;
+        guard.get(worker_id).map(WorkerRunHandle::summary)
     }
 
     async fn record_initial_history(&self, conversation_history: InitialHistory) {
@@ -2822,6 +2856,7 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
+            worker_runs: Mutex::new(HashMap::new()),
         };
 
         (session, turn_context)
@@ -2904,6 +2939,7 @@ mod tests {
             services,
             next_internal_sub_id: AtomicU64::new(0),
             managed_workers: Mutex::new(ManagedWorkerRegistry::new()),
+            worker_runs: Mutex::new(HashMap::new()),
         });
 
         (session, turn_context, rx_event)

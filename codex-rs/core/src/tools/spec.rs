@@ -242,15 +242,6 @@ fn create_delegate_worker_tool() -> ToolSpec {
         },
     );
     properties.insert(
-        "model".to_string(),
-        JsonSchema::String {
-            description: Some(
-                "Optional worker-specific model slug; defaults to the configured worker model."
-                    .to_string(),
-            ),
-        },
-    );
-    properties.insert(
         "worker_id".to_string(),
         JsonSchema::String {
             description: Some(
