@@ -78,6 +78,18 @@ pub struct CodexToolCallParam {
     /// Override the reasoning effort applied to workers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub worker_reasoning: Option<ReasoningEffort>,
+
+    /// Enable or disable the CEO orchestration layer.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceo_enabled: Option<bool>,
+
+    /// Override the model used by the CEO when enabled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceo_model: Option<String>,
+
+    /// Override the reasoning effort applied to the CEO agent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ceo_reasoning: Option<ReasoningEffort>,
 }
 
 /// Custom enum mirroring [`AskForApproval`], but has an extra dependency on
@@ -177,6 +189,9 @@ impl CodexToolCallParam {
             worker_model,
             manager_reasoning,
             worker_reasoning,
+            ceo_enabled,
+            ceo_model,
+            ceo_reasoning,
         } = self;
 
         // Build the `ConfigOverrides` recognized by codex-core.
@@ -202,6 +217,9 @@ impl CodexToolCallParam {
             worker_model,
             manager_reasoning_effort: manager_reasoning,
             worker_reasoning_effort: worker_reasoning,
+            ceo_enabled,
+            ceo_model,
+            ceo_reasoning_effort: ceo_reasoning,
         };
 
         let cli_overrides = cli_overrides
@@ -348,6 +366,25 @@ mod tests {
               },
               "manager-reasoning": {
                 "description": "Override the reasoning effort applied to the manager agent.",
+                "enum": [
+                  "none",
+                  "minimal",
+                  "low",
+                  "medium",
+                  "high"
+                ],
+                "type": "string"
+              },
+              "ceo-enabled": {
+                "description": "Enable or disable the CEO orchestration layer.",
+                "type": "boolean"
+              },
+              "ceo-model": {
+                "description": "Override the model used by the CEO when enabled.",
+                "type": "string"
+              },
+              "ceo-reasoning": {
+                "description": "Override the reasoning effort applied to the CEO agent.",
                 "enum": [
                   "none",
                   "minimal",

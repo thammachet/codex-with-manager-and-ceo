@@ -18,6 +18,7 @@ use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
+use codex_core::protocol::DelegateAgentKind;
 use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::Event;
@@ -201,7 +202,7 @@ fn resumed_initial_messages_render_history() {
 }
 
 #[test]
-fn delegate_worker_status_updates_status_header() {
+fn delegate_worker_status_updates_agent_rows() {
     let (mut chat, _rx, _ops) = make_chatwidget_manual();
 
     chat.handle_codex_event(Event {
@@ -216,19 +217,25 @@ fn delegate_worker_status_updates_status_header() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: None,
             status: DelegateWorkerStatusKind::RunningCommand,
             message: "Running cargo test".to_string(),
         }),
     });
 
-    assert!(
-        chat.current_status_header.contains("worker-7"),
-        "expected worker id in status header"
-    );
-    assert!(
-        chat.current_status_header.contains("Running cargo test"),
-        "expected worker message in status header"
-    );
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    let rows = widget.agent_rows();
+    assert_eq!(rows.len(), 1, "expected single worker row");
+    let row = &rows[0];
+    assert_eq!(row.worker_id.as_deref(), Some("worker-7"));
+    assert_eq!(row.worker_model.as_deref(), Some("gpt-test"));
+    assert_eq!(row.message, "Running cargo test");
+    assert_eq!(row.status, DelegateWorkerStatusKind::RunningCommand);
+    assert_eq!(row.depth, 1);
 }
 
 #[test]
@@ -247,6 +254,8 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
             message: "Thinking hard".to_string(),
         }),
@@ -257,30 +266,199 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-8".to_string(),
             worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: None,
             status: DelegateWorkerStatusKind::RunningTool,
             message: "Calling tool".to_string(),
         }),
     });
-
-    assert!(
-        chat.current_status_header.contains("2 workers running"),
-        "expected aggregate header when multiple workers active"
-    );
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    assert_eq!(widget.agent_rows().len(), 2);
 
     chat.handle_codex_event(Event {
         id: "status-3".into(),
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: None,
             status: DelegateWorkerStatusKind::Completed,
             message: "All done".to_string(),
         }),
     });
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    let rows = widget.agent_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].worker_id.as_deref(), Some("worker-7"));
+    assert_eq!(rows[0].status, DelegateWorkerStatusKind::Completed);
+    assert_eq!(rows[1].worker_id.as_deref(), Some("worker-8"));
+    assert_eq!(rows[1].status, DelegateWorkerStatusKind::RunningTool);
+}
 
-    assert!(
-        chat.current_status_header.contains("worker-8"),
-        "expected header to show remaining worker"
+#[test]
+fn delegate_manager_and_worker_statuses_render_hierarchy() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "turn".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-manager".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "manager-7".to_string(),
+            worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Manager,
+            parent_worker_id: None,
+            status: DelegateWorkerStatusKind::Running,
+            message: "Manager update".to_string(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-worker".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-9".to_string(),
+            worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: Some("manager-7".to_string()),
+            status: DelegateWorkerStatusKind::Running,
+            message: "Worker update".to_string(),
+        }),
+    });
+
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    let rows = widget.agent_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].role, AgentRole::Manager);
+    assert_eq!(rows[0].worker_id.as_deref(), Some("manager-7"));
+    assert_eq!(rows[0].message, "Manager update");
+    assert_eq!(rows[1].role, AgentRole::Worker);
+    assert_eq!(rows[1].worker_id.as_deref(), Some("worker-9"));
+    assert_eq!(rows[1].worker_model.as_deref(), Some("gpt-test"));
+    assert_eq!(rows[1].message, "Worker update");
+    assert!(rows[1].depth > rows[0].depth);
+}
+
+#[test]
+fn worker_status_keys_include_parent_scope() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "turn".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-manager".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "manager-9".to_string(),
+            worker_model: "manager-model".to_string(),
+            agent_kind: DelegateAgentKind::Manager,
+            parent_worker_id: None,
+            status: DelegateWorkerStatusKind::Running,
+            message: "Manager is thinking".to_string(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-worker-root".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-1".to_string(),
+            worker_model: "worker-model".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: None,
+            status: DelegateWorkerStatusKind::RunningCommand,
+            message: "Running cargo test".to_string(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-worker-child".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-1".to_string(),
+            worker_model: "worker-model".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: Some("manager-9".to_string()),
+            status: DelegateWorkerStatusKind::RunningTool,
+            message: "Calling tool".to_string(),
+        }),
+    });
+
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    let rows = widget.agent_rows();
+    assert_eq!(rows.len(), 3);
+    assert_eq!(rows[0].worker_id.as_deref(), Some("manager-9"));
+    assert_eq!(rows[1].worker_id.as_deref(), Some("worker-1"));
+    assert_eq!(rows[2].worker_id.as_deref(), Some("worker-1"));
+    assert!(rows[2].depth > rows[1].depth);
+}
+
+#[test]
+fn manager_status_updates_with_child_activity() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+
+    chat.handle_codex_event(Event {
+        id: "turn".into(),
+        msg: EventMsg::TaskStarted(TaskStartedEvent {
+            model_context_window: None,
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-manager".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "manager-7".to_string(),
+            worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Manager,
+            parent_worker_id: None,
+            status: DelegateWorkerStatusKind::Running,
+            message: "Manager update".to_string(),
+        }),
+    });
+
+    chat.handle_codex_event(Event {
+        id: "status-worker".into(),
+        msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
+            worker_id: "worker-9".to_string(),
+            worker_model: "gpt-test".to_string(),
+            agent_kind: DelegateAgentKind::Worker,
+            parent_worker_id: Some("manager-7".to_string()),
+            status: DelegateWorkerStatusKind::RunningCommand,
+            message: "Worker update".to_string(),
+        }),
+    });
+
+    let widget = chat
+        .bottom_pane
+        .status_widget()
+        .expect("status widget visible");
+    let rows = widget.agent_rows();
+    assert_eq!(rows.len(), 2);
+    assert_eq!(rows[0].worker_id.as_deref(), Some("manager-7"));
+    assert_eq!(
+        rows[0].message,
+        "Delegating to Worker worker-9: Worker update"
     );
+    assert_eq!(rows[1].worker_id.as_deref(), Some("worker-9"));
+    assert_eq!(rows[1].message, "Worker update");
 }
 
 /// Entering review mode uses the hint provided by the review request.
@@ -423,7 +601,7 @@ fn make_chatwidget_manual() -> (
         reasoning_buffer: String::new(),
         full_reasoning_buffer: String::new(),
         current_status_header: String::from("Working"),
-        worker_statuses: HashMap::new(),
+        worker_statuses: IndexMap::new(),
         retry_status_header: None,
         conversation_id: None,
         frame_requester: FrameRequester::test_dummy(),

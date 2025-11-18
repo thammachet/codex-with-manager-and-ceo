@@ -14,7 +14,7 @@ mod view_image;
 pub use plan::PLAN_TOOL;
 
 pub use apply_patch::ApplyPatchHandler;
-pub use delegate_worker::DelegateWorkerHandler;
+pub use delegate_worker::DelegateAgentHandler;
 pub use grep_files::GrepFilesHandler;
 pub use list_dir::ListDirHandler;
 pub use mcp::McpHandler;

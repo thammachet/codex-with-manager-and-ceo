@@ -69,6 +69,14 @@ pub struct Cli {
     #[arg(long = "no-manager", default_value_t = false)]
     pub no_manager: bool,
 
+    /// Route prompts through a CEO agent that delegates to managers.
+    #[arg(long = "ceo", conflicts_with = "no_ceo", default_value_t = false)]
+    pub ceo: bool,
+
+    /// Disable the CEO layer even if enabled in configuration.
+    #[arg(long = "no-ceo", default_value_t = false)]
+    pub no_ceo: bool,
+
     /// Override the model used for the manager layer.
     #[arg(long = "manager-model")]
     pub manager_model: Option<String>,
@@ -77,6 +85,10 @@ pub struct Cli {
     #[arg(long = "worker-model")]
     pub worker_model: Option<String>,
 
+    /// Override the model used for the CEO layer.
+    #[arg(long = "ceo-model")]
+    pub ceo_model: Option<String>,
+
     /// Override the reasoning effort used for the manager (none, minimal, low, medium, high).
     #[arg(long = "manager-reasoning", value_enum)]
     pub manager_reasoning: Option<ReasoningEffortCliArg>,
@@ -84,6 +96,10 @@ pub struct Cli {
     /// Override the reasoning effort used for workers (none, minimal, low, medium, high).
     #[arg(long = "worker-reasoning", value_enum)]
     pub worker_reasoning: Option<ReasoningEffortCliArg>,
+
+    /// Override the reasoning effort used for the CEO (none, minimal, low, medium, high).
+    #[arg(long = "ceo-reasoning", value_enum)]
+    pub ceo_reasoning: Option<ReasoningEffortCliArg>,
 
     /// Path to a JSON Schema file describing the model's final response shape.
     #[arg(long = "output-schema", value_name = "FILE")]

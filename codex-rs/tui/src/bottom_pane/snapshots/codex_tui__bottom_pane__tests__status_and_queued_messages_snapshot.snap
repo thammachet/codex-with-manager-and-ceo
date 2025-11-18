@@ -2,7 +2,7 @@
 source: tui/src/bottom_pane/mod.rs
 expression: "render_snapshot(&pane, area)"
 ---
-• Working (0s • esc to interrupt)               
+• Worker · Working updated 0s ago (0s • esc to i
   ↳ Queued follow-up question                   
     ⌥ + ↑ edit                                  
                                                 

@@ -49,6 +49,8 @@ pub(crate) use chat_composer::ChatComposer;
 pub(crate) use chat_composer::InputResult;
 use codex_protocol::custom_prompts::CustomPrompt;
 
+use crate::status_indicator_widget::AgentRole;
+use crate::status_indicator_widget::AgentStatusEntry;
 use crate::status_indicator_widget::StatusIndicatorWidget;
 pub(crate) use list_selection_view::SelectionAction;
 pub(crate) use list_selection_view::SelectionItem;
@@ -232,6 +234,17 @@ impl BottomPane {
     pub(crate) fn update_status_header(&mut self, header: String) {
         if let Some(status) = self.status.as_mut() {
             status.update_header(header);
+            self.request_redraw();
+        }
+    }
+
+    pub(crate) fn update_agent_hierarchy(
+        &mut self,
+        top_role: AgentRole,
+        agent_rows: Vec<AgentStatusEntry>,
+    ) {
+        if let Some(status) = self.status.as_mut() {
+            status.update_agent_hierarchy(top_role, agent_rows);
             self.request_redraw();
         }
     }

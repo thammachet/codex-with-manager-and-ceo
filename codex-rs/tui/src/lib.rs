@@ -152,8 +152,16 @@ pub async fn run_main(
     } else {
         None
     };
+    let ceo_enabled = if cli.ceo {
+        Some(true)
+    } else if cli.no_ceo {
+        Some(false)
+    } else {
+        None
+    };
     let manager_reasoning = cli.manager_reasoning.map(ReasoningEffort::from);
     let worker_reasoning = cli.worker_reasoning.map(ReasoningEffort::from);
+    let ceo_reasoning = cli.ceo_reasoning.map(ReasoningEffort::from);
 
     let overrides = ConfigOverrides {
         model,
@@ -177,6 +185,9 @@ pub async fn run_main(
         worker_model: cli.worker_model.clone(),
         manager_reasoning_effort: manager_reasoning,
         worker_reasoning_effort: worker_reasoning,
+        ceo_enabled,
+        ceo_model: cli.ceo_model.clone(),
+        ceo_reasoning_effort: ceo_reasoning,
     };
     let raw_overrides = cli.config_overrides.raw_overrides.clone();
     let overrides_cli = CliConfigOverrides { raw_overrides };

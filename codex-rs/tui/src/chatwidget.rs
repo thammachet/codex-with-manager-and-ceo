@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::hash::Hash;
+use std::hash::Hasher;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -16,6 +18,7 @@ use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::DelegateAgentKind;
 use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::DeprecationNoticeEvent;
@@ -99,8 +102,12 @@ use crate::render::renderable::RenderableExt;
 use crate::render::renderable::RenderableItem;
 use crate::slash_command::SlashCommand;
 use crate::status::RateLimitSnapshotDisplay;
+use crate::status_indicator_widget::AgentRole;
+use crate::status_indicator_widget::AgentStatusEntry;
 use crate::text_formatting::truncate_text;
 use crate::tui::FrameRequester;
+use indexmap::IndexMap;
+use indexmap::map::Entry;
 mod interrupts;
 use self::interrupts::InterruptManager;
 mod agent;
@@ -123,6 +130,7 @@ use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol_config_types::ReasoningEffort as ReasoningEffortConfig;
 use codex_file_search::FileMatch;
 use codex_protocol::plan_tool::UpdatePlanArgs;
+use std::time::Instant;
 use strum::IntoEnumIterator;
 
 const USER_SHELL_COMMAND_HELP_TITLE: &str = "Prefix a command with ! to run it locally";
@@ -268,7 +276,7 @@ pub(crate) struct ChatWidget {
     full_reasoning_buffer: String,
     // Current status header shown in the status indicator.
     current_status_header: String,
-    worker_statuses: HashMap<String, String>,
+    worker_statuses: IndexMap<WorkerStatusKey, ActiveWorkerStatus>,
     // Previous status header to restore after a transient stream retry.
     retry_status_header: Option<String>,
     conversation_id: Option<ConversationId>,
@@ -299,6 +307,59 @@ struct UserMessage {
     image_paths: Vec<PathBuf>,
 }
 
+#[derive(Clone)]
+struct ActiveWorkerStatus {
+    message: String,
+    kind: DelegateAgentKind,
+    worker_model: String,
+    status: DelegateWorkerStatusKind,
+    updated_at: Instant,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct WorkerStatusKey {
+    worker_id: String,
+    parent_worker_id: Option<String>,
+    agent_kind: DelegateAgentKind,
+}
+
+impl WorkerStatusKey {
+    fn new(
+        worker_id: String,
+        agent_kind: DelegateAgentKind,
+        parent_worker_id: Option<String>,
+    ) -> Self {
+        Self {
+            worker_id,
+            parent_worker_id,
+            agent_kind,
+        }
+    }
+}
+
+impl Hash for WorkerStatusKey {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.worker_id.hash(state);
+        self.parent_worker_id.hash(state);
+        agent_kind_rank(self.agent_kind).hash(state);
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ParentKey {
+    Root,
+    Id(String),
+}
+
+impl ParentKey {
+    fn from_option(id: Option<&str>) -> Self {
+        match id {
+            Some(value) => ParentKey::Id(value.to_string()),
+            None => ParentKey::Root,
+        }
+    }
+}
+
 impl From<String> for UserMessage {
     fn from(text: String) -> Self {
         Self {
@@ -325,17 +386,29 @@ fn create_initial_user_message(text: String, image_paths: Vec<PathBuf>) -> Optio
     }
 }
 
-fn worker_status_label(status: DelegateWorkerStatusKind) -> &'static str {
-    match status {
-        DelegateWorkerStatusKind::Starting => "Starting worker",
-        DelegateWorkerStatusKind::Running => "Worker is thinking",
-        DelegateWorkerStatusKind::RunningCommand => "Running command",
-        DelegateWorkerStatusKind::RunningTool => "Calling tool",
-        DelegateWorkerStatusKind::ApplyingPatch => "Applying patch",
-        DelegateWorkerStatusKind::DiffApplied => "Recording edits",
-        DelegateWorkerStatusKind::Warning => "Worker warning",
-        DelegateWorkerStatusKind::Completed => "Worker completed",
-        DelegateWorkerStatusKind::Failed => "Worker failed",
+fn worker_status_label(kind: DelegateAgentKind, status: DelegateWorkerStatusKind) -> String {
+    let prefix = match kind {
+        DelegateAgentKind::Worker => "Worker",
+        DelegateAgentKind::Manager => "Manager",
+    };
+    let suffix = match status {
+        DelegateWorkerStatusKind::Starting => "starting up",
+        DelegateWorkerStatusKind::Running => "is thinking",
+        DelegateWorkerStatusKind::RunningCommand => "running a command",
+        DelegateWorkerStatusKind::RunningTool => "calling a tool",
+        DelegateWorkerStatusKind::ApplyingPatch => "applying patches",
+        DelegateWorkerStatusKind::DiffApplied => "recording edits",
+        DelegateWorkerStatusKind::Warning => "reported a warning",
+        DelegateWorkerStatusKind::Completed => "completed",
+        DelegateWorkerStatusKind::Failed => "failed",
+    };
+    format!("{prefix} {suffix}")
+}
+
+fn agent_kind_rank(kind: DelegateAgentKind) -> u8 {
+    match kind {
+        DelegateAgentKind::Manager => 0,
+        DelegateAgentKind::Worker => 1,
     }
 }
 
@@ -351,32 +424,143 @@ impl ChatWidget {
     fn set_status_header(&mut self, header: String) {
         self.current_status_header = header.clone();
         self.bottom_pane.update_status_header(header);
+        self.refresh_agent_status_view();
     }
 
-    fn refresh_worker_status_header(&mut self) {
+    fn current_top_agent_role(&self) -> AgentRole {
+        if self.config.ceo.enabled {
+            AgentRole::Ceo
+        } else if self.config.manager.enabled {
+            AgentRole::Manager
+        } else {
+            AgentRole::Worker
+        }
+    }
+
+    fn refresh_agent_status_view(&mut self) {
+        let top_role = self.current_top_agent_role();
+        let mut rows = Vec::with_capacity(self.worker_statuses.len());
         if self.worker_statuses.is_empty() {
+            self.bottom_pane.update_agent_hierarchy(top_role, rows);
             return;
         }
-        let mut entries: Vec<_> = self.worker_statuses.iter().collect();
-        entries.sort_by(|(left, _), (right, _)| left.cmp(right));
-        if entries.len() == 1 {
-            let (worker_id, message) = entries[0];
-            let header = format!("{message} · {worker_id}");
-            self.set_status_header(header);
-            return;
+        let depth_offset = match top_role {
+            AgentRole::Ceo => 1,
+            AgentRole::Worker => 1,
+            AgentRole::Manager => 0,
+        };
+        let mut children: HashMap<ParentKey, Vec<usize>> = HashMap::new();
+        for (idx, (key, _)) in self.worker_statuses.iter().enumerate() {
+            let parent_key = ParentKey::from_option(key.parent_worker_id.as_deref());
+            children.entry(parent_key).or_default().push(idx);
         }
-        let preview: Vec<String> = entries
-            .into_iter()
-            .take(2)
-            .map(|(worker_id, message)| format!("{message} · {worker_id}"))
-            .collect();
-        let header = format!(
-            "{} workers running · {}",
-            self.worker_statuses.len(),
-            preview.join(", "),
+        let mut visited = vec![false; self.worker_statuses.len()];
+        self.collect_agent_rows(
+            &ParentKey::Root,
+            depth_offset,
+            0,
+            &children,
+            &mut rows,
+            &mut visited,
         );
-        let truncated = truncate_text(&header, 80);
-        self.set_status_header(truncated);
+        if visited.iter().any(|seen| !*seen) {
+            for idx in 0..visited.len() {
+                if visited[idx] {
+                    continue;
+                }
+                if let Some((key, status)) = self.worker_statuses.get_index(idx) {
+                    visited[idx] = true;
+                    rows.push(self.make_agent_status_entry(key, status, depth_offset));
+                    let child_key = ParentKey::Id(key.worker_id.clone());
+                    self.collect_agent_rows(
+                        &child_key,
+                        depth_offset,
+                        1,
+                        &children,
+                        &mut rows,
+                        &mut visited,
+                    );
+                }
+            }
+        }
+
+        self.bottom_pane.update_agent_hierarchy(top_role, rows);
+    }
+
+    fn collect_agent_rows(
+        &self,
+        parent: &ParentKey,
+        depth_offset: u16,
+        relative_depth: u16,
+        children: &HashMap<ParentKey, Vec<usize>>,
+        rows: &mut Vec<AgentStatusEntry>,
+        visited: &mut [bool],
+    ) {
+        if let Some(indices) = children.get(parent) {
+            for &idx in indices {
+                if visited[idx] {
+                    continue;
+                }
+                if let Some((key, status)) = self.worker_statuses.get_index(idx) {
+                    visited[idx] = true;
+                    let depth = depth_offset.saturating_add(relative_depth);
+                    rows.push(self.make_agent_status_entry(key, status, depth));
+                    let child_key = ParentKey::Id(key.worker_id.clone());
+                    self.collect_agent_rows(
+                        &child_key,
+                        depth_offset,
+                        relative_depth + 1,
+                        children,
+                        rows,
+                        visited,
+                    );
+                }
+            }
+        }
+    }
+
+    fn make_agent_status_entry(
+        &self,
+        key: &WorkerStatusKey,
+        status: &ActiveWorkerStatus,
+        depth: u16,
+    ) -> AgentStatusEntry {
+        let row_role = match status.kind {
+            DelegateAgentKind::Worker => AgentRole::Worker,
+            DelegateAgentKind::Manager => AgentRole::Manager,
+        };
+        AgentStatusEntry {
+            role: row_role,
+            worker_id: Some(key.worker_id.clone()),
+            worker_model: Some(status.worker_model.clone()),
+            message: status.message.clone(),
+            depth,
+            status: status.status,
+            updated_at: status.updated_at,
+        }
+    }
+
+    fn update_parent_status_with_child(
+        &mut self,
+        parent_worker_id: &str,
+        child_kind: DelegateAgentKind,
+        child_worker_id: &str,
+        child_message: &str,
+    ) {
+        if let Some((_, parent_status)) = self
+            .worker_statuses
+            .iter_mut()
+            .find(|(key, _)| key.worker_id == parent_worker_id)
+        {
+            let child_role = match child_kind {
+                DelegateAgentKind::Worker => "Worker",
+                DelegateAgentKind::Manager => "Manager",
+            };
+            let summary = format!("Delegating to {child_role} {child_worker_id}: {child_message}");
+            parent_status.message = truncate_text(&summary, 64);
+            parent_status.status = DelegateWorkerStatusKind::Running;
+            parent_status.updated_at = Instant::now();
+        }
     }
 
     // --- Small event handlers ---
@@ -499,6 +683,8 @@ impl ChatWidget {
         self.retry_status_header = None;
         self.bottom_pane.set_interrupt_hint_visible(true);
         self.set_status_header(String::from("Working"));
+        self.worker_statuses.clear();
+        self.refresh_agent_status_view();
         self.full_reasoning_buffer.clear();
         self.reasoning_buffer.clear();
         self.request_redraw();
@@ -510,6 +696,8 @@ impl ChatWidget {
         // Mark task stopped and request redraw now that all content is in history.
         self.bottom_pane.set_task_running(false);
         self.running_commands.clear();
+        self.worker_statuses.clear();
+        self.refresh_agent_status_view();
         self.request_redraw();
 
         // If there is a queued user message, send exactly one now to begin the next turn.
@@ -772,30 +960,46 @@ impl ChatWidget {
     fn on_delegate_worker_status(&mut self, event: DelegateWorkerStatusEvent) {
         if !self.bottom_pane.is_task_running() {
             self.worker_statuses.clear();
+            self.refresh_agent_status_view();
             return;
         }
+        let parent_worker_id_for_update = event.parent_worker_id.clone();
+        let worker_id_for_update = event.worker_id.clone();
+        let child_kind = event.agent_kind;
         let mut label = event.message.trim().to_string();
         if label.is_empty() {
-            label = worker_status_label(event.status).to_string();
+            label = worker_status_label(event.agent_kind, event.status);
         }
         let truncated = truncate_text(&label, 64);
-        let is_terminal = matches!(
-            event.status,
-            DelegateWorkerStatusKind::Completed | DelegateWorkerStatusKind::Failed
-        );
-        if is_terminal {
-            self.worker_statuses.remove(&event.worker_id);
-            if self.worker_statuses.is_empty() {
-                let header = format!("{truncated} · {}", event.worker_id);
-                self.set_status_header(header);
-            } else {
-                self.refresh_worker_status_header();
+        let truncated_for_parent = truncated.clone();
+        let key = WorkerStatusKey::new(event.worker_id, event.agent_kind, event.parent_worker_id);
+        match self.worker_statuses.entry(key) {
+            Entry::Occupied(mut entry) => {
+                let status = entry.get_mut();
+                status.message = truncated;
+                status.worker_model = event.worker_model;
+                status.status = event.status;
+                status.updated_at = Instant::now();
             }
-        } else {
-            self.worker_statuses
-                .insert(event.worker_id.clone(), truncated);
-            self.refresh_worker_status_header();
+            Entry::Vacant(entry) => {
+                entry.insert(ActiveWorkerStatus {
+                    message: truncated,
+                    kind: event.agent_kind,
+                    worker_model: event.worker_model,
+                    status: event.status,
+                    updated_at: Instant::now(),
+                });
+            }
         }
+        if let Some(parent_worker_id) = parent_worker_id_for_update {
+            self.update_parent_status_with_child(
+                &parent_worker_id,
+                child_kind,
+                &worker_id_for_update,
+                &truncated_for_parent,
+            );
+        }
+        self.refresh_agent_status_view();
         self.request_redraw();
     }
 
@@ -1119,7 +1323,7 @@ impl ChatWidget {
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
-            worker_statuses: HashMap::new(),
+            worker_statuses: IndexMap::new(),
             retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
@@ -1187,7 +1391,7 @@ impl ChatWidget {
             reasoning_buffer: String::new(),
             full_reasoning_buffer: String::new(),
             current_status_header: String::from("Working"),
-            worker_statuses: HashMap::new(),
+            worker_statuses: IndexMap::new(),
             retry_status_header: None,
             conversation_id: None,
             queued_user_messages: VecDeque::new(),
@@ -1978,6 +2182,34 @@ impl ChatWidget {
             ..Default::default()
         });
 
+        let ceo_enabled = self.config.ceo.enabled;
+        let ceo_toggle_label = if ceo_enabled {
+            "Disable CEO layer"
+        } else {
+            "Enable CEO layer"
+        };
+        let ceo_toggle_description = if ceo_enabled {
+            "CEO layer is active. Select to fall back to the manager as the top agent."
+        } else {
+            "CEO layer is disabled. Select to add an oversight agent that delegates to managers."
+        };
+        let ceo_next_state = !ceo_enabled;
+        let ceo_actions: Vec<SelectionAction> = vec![Box::new(move |tx| {
+            tx.send(AppEvent::UpdateCeoSettings {
+                enabled: Some(ceo_next_state),
+                ceo_model: None,
+                ceo_reasoning: None,
+                persist: true,
+            });
+        })];
+        items.push(SelectionItem {
+            name: ceo_toggle_label.into(),
+            description: Some(ceo_toggle_description.into()),
+            actions: ceo_actions,
+            dismiss_on_select: false,
+            ..Default::default()
+        });
+
         let manager_label = self
             .config
             .manager
@@ -1994,6 +2226,26 @@ impl ChatWidget {
             name: format!("Manager model: {manager_label}"),
             description: Some("Select the model used by the planning manager.".into()),
             actions: manager_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
+        let ceo_label = self
+            .config
+            .ceo
+            .ceo_model
+            .as_deref()
+            .map(std::string::ToString::to_string)
+            .unwrap_or_else(|| format!("session default ({})", self.config.model));
+        let ceo_model_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerModelPopup {
+                target: ManagerModelTarget::Ceo,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("CEO model: {ceo_label}"),
+            description: Some("Select the model used by the CEO oversight agent.".into()),
+            actions: ceo_model_actions,
             dismiss_on_select: true,
             ..Default::default()
         });
@@ -2047,6 +2299,20 @@ impl ChatWidget {
             ..Default::default()
         });
 
+        let ceo_reason_label = self.ceo_reasoning_label();
+        let ceo_reason_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
+            tx.send(AppEvent::OpenManagerReasoningPopup {
+                target: ManagerModelTarget::Ceo,
+            });
+        })];
+        items.push(SelectionItem {
+            name: format!("CEO reasoning: {ceo_reason_label}"),
+            description: Some("Select the reasoning effort used by the CEO.".into()),
+            actions: ceo_reason_actions,
+            dismiss_on_select: true,
+            ..Default::default()
+        });
+
         self.bottom_pane.show_selection_view(SelectionViewParams {
             title: Some("Manager orchestration".to_string()),
             subtitle: Some("These settings apply to new sessions.".to_string()),
@@ -2076,6 +2342,14 @@ impl ChatWidget {
                     .worker_model
                     .clone()
                     .unwrap_or_else(|| self.resolved_manager_model()),
+            ),
+            ManagerModelTarget::Ceo => (
+                "Select CEO model",
+                self.config
+                    .ceo
+                    .ceo_model
+                    .clone()
+                    .unwrap_or_else(|| self.config.model.clone()),
             ),
         };
 
@@ -2128,6 +2402,28 @@ impl ChatWidget {
                     ..Default::default()
                 });
             }
+            ManagerModelTarget::Ceo => {
+                let is_current = self.config.ceo.ceo_model.is_none();
+                let desc = format!(
+                    "Use the primary session model (currently {}) for the CEO layer.",
+                    self.config.model
+                );
+                items.push(SelectionItem {
+                    name: "Use session model".into(),
+                    description: Some(desc),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateCeoSettings {
+                            enabled: None,
+                            ceo_model: Some(None),
+                            ceo_reasoning: None,
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
         }
 
         for preset in presets.into_iter() {
@@ -2143,21 +2439,35 @@ impl ChatWidget {
                 name: preset.display_name.to_string(),
                 description,
                 is_current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::UpdateManagerSettings {
-                        enabled: None,
-                        manager_model: match target_for_action {
-                            ManagerModelTarget::Manager => Some(Some(slug.clone())),
-                            ManagerModelTarget::Worker => None,
-                        },
-                        worker_model: match target_for_action {
-                            ManagerModelTarget::Worker => Some(Some(slug.clone())),
-                            ManagerModelTarget::Manager => None,
-                        },
-                        manager_reasoning: None,
-                        worker_reasoning: None,
-                        persist: true,
-                    });
+                actions: vec![Box::new(move |tx| match target_for_action {
+                    ManagerModelTarget::Manager => {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: Some(Some(slug.clone())),
+                            worker_model: None,
+                            manager_reasoning: None,
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    }
+                    ManagerModelTarget::Worker => {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: Some(Some(slug.clone())),
+                            manager_reasoning: None,
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    }
+                    ManagerModelTarget::Ceo => {
+                        tx.send(AppEvent::UpdateCeoSettings {
+                            enabled: None,
+                            ceo_model: Some(Some(slug.clone())),
+                            ceo_reasoning: None,
+                            persist: true,
+                        });
+                    }
                 })],
                 dismiss_on_select: true,
                 ..Default::default()
@@ -2184,6 +2494,9 @@ impl ChatWidget {
                 "Select worker reasoning",
                 self.config.manager.worker_reasoning_effort,
             ),
+            ManagerModelTarget::Ceo => {
+                ("Select CEO reasoning", self.config.ceo.ceo_reasoning_effort)
+            }
         };
 
         match target {
@@ -2238,6 +2551,29 @@ impl ChatWidget {
                     ..Default::default()
                 });
             }
+            ManagerModelTarget::Ceo => {
+                let label = self
+                    .config
+                    .model_reasoning_effort
+                    .map(|eff| eff.to_string())
+                    .unwrap_or_else(|| "auto".to_string());
+                let is_current = self.config.ceo.ceo_reasoning_effort.is_none();
+                items.push(SelectionItem {
+                    name: "Use session reasoning".into(),
+                    description: Some(format!("Use the session-level reasoning effort ({label}).")),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateCeoSettings {
+                            enabled: None,
+                            ceo_model: None,
+                            ceo_reasoning: Some(None),
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
+            }
         }
 
         for effort in ReasoningEffortConfig::iter() {
@@ -2247,21 +2583,35 @@ impl ChatWidget {
                 name: effort.to_string(),
                 description: None,
                 is_current,
-                actions: vec![Box::new(move |tx| {
-                    tx.send(AppEvent::UpdateManagerSettings {
-                        enabled: None,
-                        manager_model: None,
-                        worker_model: None,
-                        manager_reasoning: match target_for_action {
-                            ManagerModelTarget::Manager => Some(Some(effort)),
-                            ManagerModelTarget::Worker => None,
-                        },
-                        worker_reasoning: match target_for_action {
-                            ManagerModelTarget::Worker => Some(Some(effort)),
-                            ManagerModelTarget::Manager => None,
-                        },
-                        persist: true,
-                    });
+                actions: vec![Box::new(move |tx| match target_for_action {
+                    ManagerModelTarget::Manager => {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: None,
+                            manager_reasoning: Some(Some(effort)),
+                            worker_reasoning: None,
+                            persist: true,
+                        });
+                    }
+                    ManagerModelTarget::Worker => {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: None,
+                            manager_reasoning: None,
+                            worker_reasoning: Some(Some(effort)),
+                            persist: true,
+                        });
+                    }
+                    ManagerModelTarget::Ceo => {
+                        tx.send(AppEvent::UpdateCeoSettings {
+                            enabled: None,
+                            ceo_model: None,
+                            ceo_reasoning: Some(Some(effort)),
+                            persist: true,
+                        });
+                    }
                 })],
                 dismiss_on_select: true,
                 ..Default::default()
@@ -2447,6 +2797,13 @@ impl ChatWidget {
             .or(self.config.model_reasoning_effort)
     }
 
+    fn resolved_ceo_reasoning_effort(&self) -> Option<ReasoningEffortConfig> {
+        self.config
+            .ceo
+            .ceo_reasoning_effort
+            .or(self.config.model_reasoning_effort)
+    }
+
     fn manager_reasoning_label(&self) -> String {
         match self.config.manager.manager_reasoning_effort {
             Some(effort) => effort.to_string(),
@@ -2468,6 +2825,19 @@ impl ChatWidget {
                     format!("inherit manager ({fallback})")
                 } else {
                     "inherit manager (auto)".to_string()
+                }
+            }
+        }
+    }
+
+    fn ceo_reasoning_label(&self) -> String {
+        match self.config.ceo.ceo_reasoning_effort {
+            Some(effort) => effort.to_string(),
+            None => {
+                if let Some(fallback) = self.resolved_ceo_reasoning_effort() {
+                    format!("session default ({fallback})")
+                } else {
+                    "session default (auto)".to_string()
                 }
             }
         }

@@ -254,6 +254,9 @@ pub struct Config {
     /// Manager/worker orchestration settings.
     pub manager: ManagerConfig,
 
+    /// CEO orchestration layer settings.
+    pub ceo: CeoConfig,
+
     /// The active profile name used to derive this `Config` (if any).
     pub active_profile: Option<String>,
 
@@ -638,6 +641,10 @@ pub struct ConfigToml {
     #[serde(default)]
     pub manager: Option<ManagerConfigToml>,
 
+    /// CEO/manager orchestration settings.
+    #[serde(default)]
+    pub ceo: Option<CeoConfigToml>,
+
     /// Centralized feature flags (new). Prefer this over individual toggles.
     #[serde(default)]
     pub features: Option<FeaturesToml>,
@@ -854,6 +861,9 @@ pub struct ConfigOverrides {
     pub worker_model: Option<String>,
     pub manager_reasoning_effort: Option<ReasoningEffort>,
     pub worker_reasoning_effort: Option<ReasoningEffort>,
+    pub ceo_enabled: Option<bool>,
+    pub ceo_model: Option<String>,
+    pub ceo_reasoning_effort: Option<ReasoningEffort>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -934,6 +944,54 @@ pub struct ManagerConfigToml {
     pub worker_reasoning_effort: Option<ReasoningEffort>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct CeoConfig {
+    pub enabled: bool,
+    pub ceo_model: Option<String>,
+    pub ceo_reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl CeoConfig {
+    fn resolve(
+        toml: Option<&CeoConfigToml>,
+        overrides: (Option<bool>, Option<String>, Option<ReasoningEffort>),
+    ) -> Self {
+        let (override_enabled, override_model, override_effort) = overrides;
+        let mut cfg = CeoConfig::default();
+        if let Some(toml) = toml {
+            if let Some(enabled) = toml.enabled {
+                cfg.enabled = enabled;
+            }
+            if let Some(model) = toml.ceo_model.clone() {
+                cfg.ceo_model = Some(model);
+            }
+            if let Some(effort) = toml.ceo_reasoning_effort {
+                cfg.ceo_reasoning_effort = Some(effort);
+            }
+        }
+        if let Some(enabled) = override_enabled {
+            cfg.enabled = enabled;
+        }
+        if let Some(model) = override_model {
+            cfg.ceo_model = Some(model);
+        }
+        if let Some(effort) = override_effort {
+            cfg.ceo_reasoning_effort = Some(effort);
+        }
+        cfg
+    }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, PartialEq, Eq)]
+pub struct CeoConfigToml {
+    #[serde(default)]
+    pub enabled: Option<bool>,
+    #[serde(default)]
+    pub ceo_model: Option<String>,
+    #[serde(default)]
+    pub ceo_reasoning_effort: Option<ReasoningEffort>,
+}
+
 impl Config {
     /// Meant to be used exclusively for tests: `load_with_overrides()` should
     /// be used in all other cases.
@@ -967,6 +1025,9 @@ impl Config {
             worker_model: worker_model_override,
             manager_reasoning_effort: manager_reasoning_override,
             worker_reasoning_effort: worker_reasoning_override,
+            ceo_enabled,
+            ceo_model: ceo_model_override,
+            ceo_reasoning_effort: ceo_reasoning_override,
         } = overrides;
 
         let active_profile_name = config_profile_key
@@ -1040,6 +1101,10 @@ impl Config {
                 manager_reasoning_override,
                 worker_reasoning_override,
             ),
+        );
+        let ceo = CeoConfig::resolve(
+            cfg.ceo.as_ref(),
+            (ceo_enabled, ceo_model_override, ceo_reasoning_override),
         );
         let active_project = cfg
             .get_active_project(&resolved_cwd)
@@ -1271,6 +1336,7 @@ impl Config {
                 .map(|t| t.notifications.clone())
                 .unwrap_or_default(),
             manager,
+            ceo,
             otel: {
                 let t: OtelConfigToml = cfg.otel.unwrap_or_default();
                 let log_user_prompt = t.log_user_prompt.unwrap_or(false);
@@ -3005,6 +3071,7 @@ model_verbosity = "high"
                 use_experimental_use_rmcp_client: false,
                 features: Features::with_defaults(),
                 manager: ManagerConfig::default(),
+                ceo: CeoConfig::default(),
                 active_profile: Some("o3".to_string()),
                 active_project: ProjectConfig { trust_level: None },
                 windows_wsl_setup_acknowledged: false,
@@ -3077,6 +3144,7 @@ model_verbosity = "high"
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
             manager: ManagerConfig::default(),
+            ceo: CeoConfig::default(),
             active_profile: Some("gpt3".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,
@@ -3164,6 +3232,7 @@ model_verbosity = "high"
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
             manager: ManagerConfig::default(),
+            ceo: CeoConfig::default(),
             active_profile: Some("zdr".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,
@@ -3237,6 +3306,7 @@ model_verbosity = "high"
             use_experimental_use_rmcp_client: false,
             features: Features::with_defaults(),
             manager: ManagerConfig::default(),
+            ceo: CeoConfig::default(),
             active_profile: Some("gpt5".to_string()),
             active_project: ProjectConfig { trust_level: None },
             windows_wsl_setup_acknowledged: false,

@@ -4,6 +4,7 @@ use std::time::Instant;
 
 use async_trait::async_trait;
 use codex_protocol::parse_command::ParsedCommand;
+use codex_protocol::protocol::DelegateAgentKind;
 use codex_protocol::protocol::DelegateWorkerStatusKind;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -36,17 +37,36 @@ use crate::tools::registry::ToolKind;
 
 use crate::error::CodexErr;
 
-pub struct DelegateWorkerHandler;
+#[derive(Clone, Copy, Debug)]
+pub struct DelegateAgentHandler {
+    kind: DelegateAgentKind,
+}
+
+impl DelegateAgentHandler {
+    pub const fn worker() -> Self {
+        Self {
+            kind: DelegateAgentKind::Worker,
+        }
+    }
+
+    pub const fn manager() -> Self {
+        Self {
+            kind: DelegateAgentKind::Manager,
+        }
+    }
+}
 
 #[derive(Debug, Deserialize)]
-struct DelegateWorkerArgs {
+struct DelegateAgentArgs {
     #[serde(default)]
     objective: Option<String>,
     #[serde(default)]
     context: Option<String>,
     #[serde(default)]
+    persona: Option<String>,
+    #[serde(default, alias = "manager_model")]
     model: Option<String>,
-    #[serde(default)]
+    #[serde(default, alias = "manager_id")]
     worker_id: Option<String>,
     #[serde(default)]
     action: WorkerAction,
@@ -56,11 +76,26 @@ struct DelegateWorkerArgs {
 
 const WORKER_STATUS_MIN_INTERVAL: Duration = Duration::from_millis(750);
 
+fn append_persona_instructions(target: &mut Option<String>, persona: Option<&str>) {
+    let Some(persona) = persona.map(str::trim).filter(|p| !p.is_empty()) else {
+        return;
+    };
+    let persona_block = format!("Persona instructions:\n{persona}");
+    let updated = match target.take() {
+        Some(existing) if !existing.trim().is_empty() => {
+            format!("{existing}\n\n{persona_block}")
+        }
+        _ => persona_block,
+    };
+    *target = Some(updated);
+}
+
 struct WorkerStatusEmitter {
     session: Arc<Session>,
     turn: Arc<TurnContext>,
     worker_id: String,
     worker_model: String,
+    agent_kind: DelegateAgentKind,
     last_status: Option<DelegateWorkerStatusKind>,
     last_message: Option<String>,
     last_emit_at: Option<Instant>,
@@ -72,12 +107,14 @@ impl WorkerStatusEmitter {
         turn: Arc<TurnContext>,
         worker_id: String,
         worker_model: String,
+        agent_kind: DelegateAgentKind,
     ) -> Self {
         Self {
             session,
             turn,
             worker_id,
             worker_model,
+            agent_kind,
             last_status: None,
             last_message: None,
             last_emit_at: None,
@@ -98,6 +135,7 @@ impl WorkerStatusEmitter {
                     self.turn.as_ref(),
                     self.worker_id.clone(),
                     self.worker_model.clone(),
+                    self.agent_kind,
                     status,
                     trimmed.clone(),
                 )
@@ -158,11 +196,18 @@ impl WorkerCompletionHook {
     }
 }
 
-fn parse_args(payload: &ToolPayload) -> Result<DelegateWorkerArgs, FunctionCallError> {
+fn parse_args(
+    payload: &ToolPayload,
+    kind: DelegateAgentKind,
+) -> Result<DelegateAgentArgs, FunctionCallError> {
     if let ToolPayload::Function { arguments } = payload {
-        let mut parsed: DelegateWorkerArgs = serde_json::from_str(arguments).map_err(|err| {
+        let mut parsed: DelegateAgentArgs = serde_json::from_str(arguments).map_err(|err| {
             FunctionCallError::RespondToModel(
-                format!("delegate_worker arguments must be valid JSON: {err}").into(),
+                format!(
+                    "{} arguments must be valid JSON: {err}",
+                    tool_name_for_kind(kind)
+                )
+                .into(),
             )
         })?;
 
@@ -186,8 +231,12 @@ fn parse_args(payload: &ToolPayload) -> Result<DelegateWorkerArgs, FunctionCallE
             WorkerAction::Start | WorkerAction::Message => {
                 if parsed.objective.is_none() {
                     return Err(FunctionCallError::RespondToModel(
-                        "delegate_worker requires a non-empty objective when starting or messaging a worker"
-                            .into(),
+                        format!(
+                            "{} requires a non-empty objective when starting or messaging a {}",
+                            tool_name_for_kind(kind),
+                            noun_for_kind(kind)
+                        )
+                        .into(),
                     ));
                 }
             }
@@ -203,21 +252,61 @@ fn parse_args(payload: &ToolPayload) -> Result<DelegateWorkerArgs, FunctionCallE
         ) && parsed.worker_id.is_none()
         {
             return Err(FunctionCallError::RespondToModel(
-                "delegate_worker requires worker_id when messaging or closing a worker".into(),
+                format!(
+                    "{} requires {} when messaging or closing a {}",
+                    tool_name_for_kind(kind),
+                    id_key_for_kind(kind),
+                    noun_for_kind(kind)
+                )
+                .into(),
             ));
         }
 
         if parsed.action == WorkerAction::Start && parsed.worker_id.is_some() {
             return Err(FunctionCallError::RespondToModel(
-                "worker_id cannot be supplied when starting a new worker".into(),
+                format!(
+                    "{} cannot be supplied when starting a new {}",
+                    id_key_for_kind(kind),
+                    noun_for_kind(kind)
+                )
+                .into(),
             ));
         }
 
         Ok(parsed)
     } else {
-        Err(FunctionCallError::Fatal(
-            "delegate_worker handler received unsupported payload".to_string(),
-        ))
+        Err(FunctionCallError::Fatal(format!(
+            "{} handler received unsupported payload",
+            tool_name_for_kind(kind)
+        )))
+    }
+}
+
+fn tool_name_for_kind(kind: DelegateAgentKind) -> &'static str {
+    match kind {
+        DelegateAgentKind::Worker => "delegate_worker",
+        DelegateAgentKind::Manager => "delegate_manager",
+    }
+}
+
+fn noun_for_kind(kind: DelegateAgentKind) -> &'static str {
+    match kind {
+        DelegateAgentKind::Worker => "worker",
+        DelegateAgentKind::Manager => "manager",
+    }
+}
+
+fn id_key_for_kind(kind: DelegateAgentKind) -> &'static str {
+    match kind {
+        DelegateAgentKind::Worker => "worker_id",
+        DelegateAgentKind::Manager => "manager_id",
+    }
+}
+
+fn title_for_kind(kind: DelegateAgentKind) -> &'static str {
+    match kind {
+        DelegateAgentKind::Worker => "Worker",
+        DelegateAgentKind::Manager => "Manager",
     }
 }
 
@@ -232,17 +321,21 @@ fn build_worker_input(objective: &str, context: Option<&str>) -> Vec<UserInput> 
 
 fn format_summary(summary: &WorkerRunSummary) -> String {
     let mut lines = Vec::new();
-    lines.push(format!("Worker ID: {}", summary.worker_id));
+    let label = match summary.agent_kind {
+        DelegateAgentKind::Worker => "Worker",
+        DelegateAgentKind::Manager => "Manager",
+    };
+    lines.push(format!("{label} ID: {}", summary.worker_id));
     lines.push(format!("Action: {}", summary.action));
     lines.push(format!(
-        "Worker state: {}",
+        "{label} state: {}",
         if summary.worker_active {
             "active"
         } else {
             "closed"
         }
     ));
-    lines.push(format!("Worker model: {}", summary.worker_model));
+    lines.push(format!("{label} model: {}", summary.worker_model));
     if !summary.objective.trim().is_empty() {
         lines.push(format!("Objective: {}", summary.objective.trim()));
     }
@@ -256,13 +349,13 @@ fn format_summary(summary: &WorkerRunSummary) -> String {
         .map(|m| m.trim())
         .filter(|m| !m.is_empty())
     {
-        lines.push("Worker response:".to_string());
+        lines.push(format!("{label} response:"));
         lines.push(msg.to_string());
     } else {
-        lines.push("Worker did not produce a final response.".to_string());
+        lines.push(format!("{label} did not produce a final response."));
     }
     if !summary.errors.is_empty() {
-        lines.push("Worker warnings:".to_string());
+        lines.push(format!("{label} warnings:"));
         for err in &summary.errors {
             lines.push(format!("- {err}"));
         }
@@ -321,7 +414,7 @@ fn spawn_worker_run(
 }
 
 #[async_trait]
-impl ToolHandler for DelegateWorkerHandler {
+impl ToolHandler for DelegateAgentHandler {
     fn kind(&self) -> ToolKind {
         ToolKind::Function
     }
@@ -334,7 +427,7 @@ impl ToolHandler for DelegateWorkerHandler {
             ..
         } = invocation;
 
-        let args = parse_args(&payload)?;
+        let args = parse_args(&payload, self.kind)?;
 
         let blocking = args.blocking.unwrap_or(true);
 
@@ -343,7 +436,8 @@ impl ToolHandler for DelegateWorkerHandler {
                 let auth_manager = turn.client.get_auth_manager().ok_or_else(|| {
                     FunctionCallError::Fatal("missing auth manager for worker".to_string())
                 })?;
-                start_worker(
+                start_agent(
+                    self.kind,
                     Arc::clone(&session),
                     Arc::clone(&turn),
                     &args,
@@ -353,59 +447,100 @@ impl ToolHandler for DelegateWorkerHandler {
                 .await?
             }
             WorkerAction::Message => {
-                resume_worker(Arc::clone(&session), Arc::clone(&turn), &args, blocking).await?
+                resume_agent(
+                    self.kind,
+                    Arc::clone(&session),
+                    Arc::clone(&turn),
+                    &args,
+                    blocking,
+                )
+                .await?
             }
-            WorkerAction::Close => close_worker(Arc::clone(&session), &args).await?,
-            WorkerAction::Await => await_worker(Arc::clone(&session), &args).await?,
-            WorkerAction::Status => worker_status(Arc::clone(&session), &args).await?,
+            WorkerAction::Close => close_agent(self.kind, Arc::clone(&session), &args).await?,
+            WorkerAction::Await => await_agent(self.kind, Arc::clone(&session), &args).await?,
+            WorkerAction::Status => agent_status(self.kind, Arc::clone(&session), &args).await?,
         };
 
         Ok(output)
     }
 }
 
-async fn start_worker(
+async fn start_agent(
+    kind: DelegateAgentKind,
     session: Arc<Session>,
     turn: Arc<TurnContext>,
-    args: &DelegateWorkerArgs,
+    args: &DelegateAgentArgs,
     auth_manager: Arc<AuthManager>,
     blocking: bool,
 ) -> Result<ToolOutput, FunctionCallError> {
-    let mut worker_config = (*turn.client.config()).clone();
-    worker_config.manager.enabled = false;
+    let mut agent_config = (*turn.client.config()).clone();
+    agent_config.ceo.enabled = false;
 
-    let worker_model = args
-        .model
-        .clone()
-        .or_else(|| worker_config.manager.worker_model.clone())
-        .unwrap_or_else(|| worker_config.model.clone());
-    worker_config.model = worker_model.clone();
-    let worker_effort = worker_config
-        .manager
-        .worker_reasoning_effort
-        .or(worker_config.manager.manager_reasoning_effort)
-        .or(worker_config.model_reasoning_effort);
-    worker_config.model_reasoning_effort = worker_effort;
-    worker_config.manager.manager_reasoning_effort = None;
-    worker_config.manager.worker_reasoning_effort = None;
+    let agent_model = match kind {
+        DelegateAgentKind::Worker => {
+            agent_config.manager.enabled = false;
+            let model = args
+                .model
+                .clone()
+                .or_else(|| agent_config.manager.worker_model.clone())
+                .unwrap_or_else(|| agent_config.model.clone());
+            agent_config.model = model.clone();
+            let effort = agent_config
+                .manager
+                .worker_reasoning_effort
+                .or(agent_config.manager.manager_reasoning_effort)
+                .or(agent_config.model_reasoning_effort);
+            agent_config.model_reasoning_effort = effort;
+            agent_config.manager.manager_reasoning_effort = None;
+            agent_config.manager.worker_reasoning_effort = None;
+            model
+        }
+        DelegateAgentKind::Manager => {
+            agent_config.manager.enabled = true;
+            let model = args
+                .model
+                .clone()
+                .or_else(|| agent_config.manager.manager_model.clone())
+                .unwrap_or_else(|| agent_config.model.clone());
+            agent_config.model = model.clone();
+            agent_config.manager.manager_model = Some(model.clone());
+            let effort = agent_config
+                .manager
+                .manager_reasoning_effort
+                .or(agent_config.model_reasoning_effort);
+            agent_config.model_reasoning_effort = effort;
+            model
+        }
+    };
+
+    append_persona_instructions(
+        &mut agent_config.developer_instructions,
+        args.persona.as_deref(),
+    );
 
     let cancel = CancellationToken::new();
     let worker_codex = run_codex_conversation_interactive(
-        worker_config,
+        agent_config,
         auth_manager,
         Arc::clone(&session),
         Arc::clone(&turn),
         cancel.clone(),
         None,
-        SubAgentSource::Other("manager_worker".to_string()),
+        match kind {
+            DelegateAgentKind::Worker => SubAgentSource::Other("manager_worker".to_string()),
+            DelegateAgentKind::Manager => SubAgentSource::Other("ceo_manager".to_string()),
+        },
     )
     .await
-    .map_err(|err| FunctionCallError::Fatal(format!("failed to start worker: {err}")))?;
+    .map_err(|err| {
+        FunctionCallError::Fatal(format!("failed to start {}: {err}", noun_for_kind(kind)))
+    })?;
 
-    let worker_id = session.allocate_worker_id().await;
+    let worker_id = session.allocate_worker_id(kind).await;
     let worker = Arc::new(ManagedWorker::new(
         worker_id.clone(),
-        worker_model.clone(),
+        agent_model.clone(),
+        kind,
         worker_codex,
         cancel,
     ));
@@ -416,19 +551,21 @@ async fn start_worker(
     let summary = Arc::new(Mutex::new(WorkerRunSummary::new(
         worker_id.clone(),
         objective,
-        worker_model,
+        agent_model,
         WorkerAction::Start,
+        kind,
     )));
     let mut status_emitter = WorkerStatusEmitter::new(
         Arc::clone(&session),
         Arc::clone(&turn),
         worker_id.clone(),
         worker.model.clone(),
+        kind,
     );
     status_emitter
         .emit(
             DelegateWorkerStatusKind::Starting,
-            format!("Starting worker for {objective_preview}"),
+            format!("Starting {} for {objective_preview}", noun_for_kind(kind)),
         )
         .await;
 
@@ -472,24 +609,29 @@ async fn start_worker(
     Ok(summary_output(summary_value))
 }
 
-async fn resume_worker(
+async fn resume_agent(
+    expected_kind: DelegateAgentKind,
     session: Arc<Session>,
     turn: Arc<TurnContext>,
-    args: &DelegateWorkerArgs,
+    args: &DelegateAgentArgs,
     blocking: bool,
 ) -> Result<ToolOutput, FunctionCallError> {
-    let worker_id = worker_id_or_bug(args)?;
+    let worker_id = agent_id_or_bug(args, expected_kind)?;
     if session.worker_has_pending_run(&worker_id).await {
-        return Err(worker_has_pending_run(&worker_id));
+        return Err(agent_has_pending_run(expected_kind, &worker_id));
     }
     let worker = session
         .get_worker(&worker_id)
         .await
-        .ok_or_else(|| worker_not_found(&worker_id))?;
+        .ok_or_else(|| agent_not_found(expected_kind, &worker_id))?;
+
+    if worker.agent_kind != expected_kind {
+        return Err(wrong_kind_error(expected_kind, worker.agent_kind));
+    }
 
     if worker.is_closed() {
         session.remove_worker(&worker_id).await;
-        return Err(worker_not_found(&worker_id));
+        return Err(agent_not_found(expected_kind, &worker_id));
     }
 
     let objective = args.objective.clone().unwrap_or_default();
@@ -500,17 +642,22 @@ async fn resume_worker(
         objective,
         worker.model.clone(),
         WorkerAction::Message,
+        expected_kind,
     )));
     let mut status_emitter = WorkerStatusEmitter::new(
         Arc::clone(&session),
         Arc::clone(&turn),
         worker_id.clone(),
         worker.model.clone(),
+        expected_kind,
     );
     status_emitter
         .emit(
             DelegateWorkerStatusKind::Running,
-            format!("Resuming worker for {objective_preview}"),
+            format!(
+                "Resuming {} for {objective_preview}",
+                noun_for_kind(expected_kind)
+            ),
         )
         .await;
 
@@ -554,18 +701,28 @@ async fn resume_worker(
     Ok(summary_output(summary_value))
 }
 
-async fn close_worker(
+async fn close_agent(
+    expected_kind: DelegateAgentKind,
     session: Arc<Session>,
-    args: &DelegateWorkerArgs,
+    args: &DelegateAgentArgs,
 ) -> Result<ToolOutput, FunctionCallError> {
-    let worker_id = worker_id_or_bug(args)?;
+    let worker_id = agent_id_or_bug(args, expected_kind)?;
+    if let Some(summary) = session.worker_run_summary(&worker_id).await {
+        let agent_kind = summary.lock().await.agent_kind;
+        if agent_kind != expected_kind {
+            return Err(wrong_kind_error(expected_kind, agent_kind));
+        }
+    }
     if let Some(run) = session.take_worker_run(&worker_id).await {
         let _ = run.wait().await;
     }
     let worker = session
         .remove_worker(&worker_id)
         .await
-        .ok_or_else(|| worker_not_found(&worker_id))?;
+        .ok_or_else(|| agent_not_found(expected_kind, &worker_id))?;
+    if worker.agent_kind != expected_kind {
+        return Err(wrong_kind_error(expected_kind, worker.agent_kind));
+    }
     worker.shutdown().await;
 
     let mut summary = WorkerRunSummary::new(
@@ -573,6 +730,7 @@ async fn close_worker(
         String::new(),
         worker.model.clone(),
         WorkerAction::Close,
+        expected_kind,
     );
     summary.worker_active = false;
     summary.completed = true;
@@ -580,29 +738,43 @@ async fn close_worker(
     Ok(summary_output(summary))
 }
 
-async fn await_worker(
+async fn await_agent(
+    expected_kind: DelegateAgentKind,
     session: Arc<Session>,
-    args: &DelegateWorkerArgs,
+    args: &DelegateAgentArgs,
 ) -> Result<ToolOutput, FunctionCallError> {
-    let worker_id = worker_id_or_bug(args)?;
+    let worker_id = agent_id_or_bug(args, expected_kind)?;
+    if let Some(summary) = session.worker_run_summary(&worker_id).await {
+        let agent_kind = summary.lock().await.agent_kind;
+        if agent_kind != expected_kind {
+            return Err(wrong_kind_error(expected_kind, agent_kind));
+        }
+    }
     let handle = session
         .take_worker_run(&worker_id)
         .await
-        .ok_or_else(|| no_pending_run(&worker_id))?;
+        .ok_or_else(|| no_pending_run(expected_kind, &worker_id))?;
     let summary = handle.wait().await?;
     Ok(summary_output(summary))
 }
 
-async fn worker_status(
+async fn agent_status(
+    expected_kind: DelegateAgentKind,
     session: Arc<Session>,
-    args: &DelegateWorkerArgs,
+    args: &DelegateAgentArgs,
 ) -> Result<ToolOutput, FunctionCallError> {
-    let worker_id = worker_id_or_bug(args)?;
+    let worker_id = agent_id_or_bug(args, expected_kind)?;
     let summary = session
         .worker_run_summary(&worker_id)
         .await
-        .ok_or_else(|| no_pending_run(&worker_id))?;
-    let summary_value = summary.lock().await.clone();
+        .ok_or_else(|| no_pending_run(expected_kind, &worker_id))?;
+    let summary_value = {
+        let guard = summary.lock().await;
+        if guard.agent_kind != expected_kind {
+            return Err(wrong_kind_error(expected_kind, guard.agent_kind));
+        }
+        guard.clone()
+    };
     Ok(summary_output(summary_value))
 }
 
@@ -614,19 +786,22 @@ async fn run_worker_turn(
     summary: Arc<Mutex<WorkerRunSummary>>,
     mut status_emitter: WorkerStatusEmitter,
 ) -> Result<bool, FunctionCallError> {
+    let noun = noun_for_kind(worker.agent_kind);
+    let title = title_for_kind(worker.agent_kind);
+    let parent_worker_id = worker.id.clone();
     let _permit = worker
         .acquire()
         .await
-        .map_err(|_| worker_not_found(&worker.id))?;
+        .map_err(|_| agent_not_found(worker.agent_kind, &worker.id))?;
     worker
         .codex
         .submit(Op::UserInput { items: input })
         .await
-        .map_err(|err| FunctionCallError::Fatal(format!("failed to submit worker input: {err}")))?;
+        .map_err(|err| FunctionCallError::Fatal(format!("failed to submit {noun} input: {err}")))?;
     status_emitter
         .emit(
             DelegateWorkerStatusKind::Running,
-            "Sent objective to worker",
+            format!("Sent objective to {noun}"),
         )
         .await;
 
@@ -635,7 +810,10 @@ async fn run_worker_turn(
             Ok(event) => match event.msg {
                 EventMsg::TaskStarted(TaskStartedEvent { .. }) => {
                     status_emitter
-                        .emit(DelegateWorkerStatusKind::Running, "Worker is thinking")
+                        .emit(
+                            DelegateWorkerStatusKind::Running,
+                            format!("{title} is thinking"),
+                        )
                         .await;
                 }
                 EventMsg::TaskComplete(task) => {
@@ -647,7 +825,7 @@ async fn run_worker_turn(
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Completed,
-                            "Worker completed the objective",
+                            format!("{title} completed the objective"),
                         )
                         .await;
                     return Ok(true);
@@ -660,7 +838,7 @@ async fn run_worker_turn(
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Failed,
-                            format!("Worker aborted: {:?}", aborted.reason),
+                            format!("{title} aborted: {:?}", aborted.reason),
                         )
                         .await;
                     return Ok(false);
@@ -673,7 +851,7 @@ async fn run_worker_turn(
                     status_emitter
                         .emit(
                             DelegateWorkerStatusKind::Warning,
-                            format!("Worker warning: {}", err.message),
+                            format!("{title} warning: {}", err.message),
                         )
                         .await;
                 }
@@ -722,17 +900,23 @@ async fn run_worker_turn(
                         )
                         .await;
                 }
+                EventMsg::DelegateWorkerStatus(mut nested) => {
+                    nested.parent_worker_id = Some(parent_worker_id.clone());
+                    session
+                        .send_event(turn.as_ref(), EventMsg::DelegateWorkerStatus(nested))
+                        .await;
+                }
                 _ => {}
             },
             Err(CodexErr::InternalAgentDied) => {
                 {
                     let mut guard = summary.lock().await;
-                    guard.aborted_reason = Some("worker exited unexpectedly".to_string());
+                    guard.aborted_reason = Some(format!("{title} exited unexpectedly"));
                 }
                 status_emitter
                     .emit(
                         DelegateWorkerStatusKind::Failed,
-                        "Worker exited unexpectedly",
+                        format!("{title} exited unexpectedly"),
                     )
                     .await;
                 return Ok(false);
@@ -741,44 +925,59 @@ async fn run_worker_turn(
                 status_emitter
                     .emit(
                         DelegateWorkerStatusKind::Failed,
-                        format!("Worker failed: {err}"),
+                        format!("{title} failed: {err}"),
                     )
                     .await;
                 return Err(FunctionCallError::Fatal(format!(
-                    "worker failed before completion: {err}"
+                    "{noun} failed before completion: {err}"
                 )));
             }
         }
     }
 }
 
-fn worker_not_found(worker_id: &str) -> FunctionCallError {
-    FunctionCallError::RespondToModel(
-        format!("worker `{worker_id}` is not active. Start a new worker instead.").into(),
-    )
-}
-
-fn worker_has_pending_run(worker_id: &str) -> FunctionCallError {
+fn agent_not_found(kind: DelegateAgentKind, worker_id: &str) -> FunctionCallError {
     FunctionCallError::RespondToModel(
         format!(
-            "worker `{worker_id}` already has a request in flight. Call delegate_worker with action:\"await\" to collect the result before sending another objective."
+            "{} `{worker_id}` is not active. Start a new {} instead.",
+            title_for_kind(kind),
+            noun_for_kind(kind)
         )
         .into(),
     )
 }
 
-fn no_pending_run(worker_id: &str) -> FunctionCallError {
+fn agent_has_pending_run(kind: DelegateAgentKind, worker_id: &str) -> FunctionCallError {
     FunctionCallError::RespondToModel(
         format!(
-            "worker `{worker_id}` has no pending asynchronous turn. Start a new objective with blocking:false before awaiting."
+            "{} `{worker_id}` already has a request in flight. Call {} with action:\"await\" to collect the result before sending another objective.",
+            title_for_kind(kind),
+            tool_name_for_kind(kind)
         )
         .into(),
     )
 }
 
-fn worker_id_or_bug(args: &DelegateWorkerArgs) -> Result<String, FunctionCallError> {
+fn no_pending_run(kind: DelegateAgentKind, worker_id: &str) -> FunctionCallError {
+    FunctionCallError::RespondToModel(
+        format!(
+            "{} `{worker_id}` has no pending asynchronous turn. Start a new objective with blocking:false before awaiting.",
+            title_for_kind(kind)
+        )
+        .into(),
+    )
+}
+
+fn agent_id_or_bug(
+    args: &DelegateAgentArgs,
+    kind: DelegateAgentKind,
+) -> Result<String, FunctionCallError> {
     args.worker_id.clone().ok_or_else(|| {
-        FunctionCallError::Fatal("delegate_worker missing worker_id after validation".to_string())
+        FunctionCallError::Fatal(format!(
+            "{} missing {} after validation",
+            tool_name_for_kind(kind),
+            id_key_for_kind(kind)
+        ))
     })
 }
 
@@ -855,15 +1054,30 @@ fn truncate_preview(input: &str, max_chars: usize) -> String {
     format!("{prefix}...")
 }
 
+fn wrong_kind_error(expected: DelegateAgentKind, actual: DelegateAgentKind) -> FunctionCallError {
+    FunctionCallError::RespondToModel(
+        format!(
+            "{} cannot target {} IDs. Use {} instead.",
+            tool_name_for_kind(expected),
+            noun_for_kind(actual),
+            tool_name_for_kind(actual),
+        )
+        .into(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use pretty_assertions::assert_eq;
 
-    fn parse(input: &str) -> Result<DelegateWorkerArgs, FunctionCallError> {
-        parse_args(&ToolPayload::Function {
-            arguments: input.to_string(),
-        })
+    fn parse(input: &str) -> Result<DelegateAgentArgs, FunctionCallError> {
+        parse_args(
+            &ToolPayload::Function {
+                arguments: input.to_string(),
+            },
+            DelegateAgentKind::Worker,
+        )
     }
 
     #[test]
@@ -916,5 +1130,28 @@ mod tests {
         assert_eq!(args.action, WorkerAction::Close);
         assert_eq!(args.worker_id.as_deref(), Some("worker-7"));
         assert!(args.objective.is_none());
+    }
+
+    #[test]
+    fn persona_instructions_are_appended() {
+        let mut instructions = Some("Follow AGENTS".to_string());
+        append_persona_instructions(&mut instructions, Some("Act as a strict reviewer."));
+        let expected = "Follow AGENTS\n\nPersona instructions:\nAct as a strict reviewer.";
+        assert_eq!(instructions.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn persona_instructions_created_when_empty() {
+        let mut instructions = None;
+        append_persona_instructions(&mut instructions, Some("Lead with architecture first."));
+        let expected = "Persona instructions:\nLead with architecture first.";
+        assert_eq!(instructions.as_deref(), Some(expected));
+    }
+
+    #[test]
+    fn blank_persona_is_ignored() {
+        let mut instructions = Some("Existing".to_string());
+        append_persona_instructions(&mut instructions, Some("   \n"));
+        assert_eq!(instructions.as_deref(), Some("Existing"));
     }
 }

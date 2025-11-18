@@ -4,6 +4,7 @@ use codex_core::config::Config;
 use codex_core::protocol::AgentMessageEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::DelegateAgentKind;
 use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DeprecationNoticeEvent;
 use codex_core::protocol::ErrorEvent;
@@ -189,12 +190,17 @@ impl EventProcessor for EventProcessorWithHumanOutput {
             EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
                 worker_id,
                 message,
+                agent_kind,
                 ..
             }) => {
+                let short = match agent_kind {
+                    DelegateAgentKind::Worker => "wkr",
+                    DelegateAgentKind::Manager => "mgr",
+                };
                 ts_msg!(
                     self,
                     "{} {}",
-                    format!("[{worker_id}]").style(self.dimmed),
+                    format!("[{worker_id}/{short}]").style(self.dimmed),
                     message
                 );
             }

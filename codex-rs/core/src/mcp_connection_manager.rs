@@ -6,6 +6,7 @@
 //! in a single aggregated map using the fully-qualified tool name
 //! `"<server><MCP_TOOL_NAME_DELIMITER><tool>"` as the key.
 
+use std::collections::BTreeMap;
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
@@ -308,6 +309,24 @@ impl McpConnectionManager {
             .collect()
     }
 
+    /// Returns MCP tool names grouped by server using deterministic ordering.
+    pub fn tool_names_by_server(&self) -> BTreeMap<String, Vec<String>> {
+        let mut grouped: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        for tool in self.tools.values() {
+            grouped
+                .entry(tool.server_name.clone())
+                .or_default()
+                .push(tool.tool_name.clone());
+        }
+
+        for tools in grouped.values_mut() {
+            tools.sort();
+            tools.dedup();
+        }
+
+        grouped
+    }
+
     /// Returns a single map that contains all resources. Each key is the
     /// server name and the value is a vector of resources.
     pub async fn list_all_resources(&self) -> HashMap<String, Vec<Resource>> {
@@ -559,6 +578,45 @@ impl ToolFilter {
         }
 
         !self.disabled.contains(tool_name)
+    }
+}
+
+#[cfg(test)]
+impl McpConnectionManager {
+    pub(crate) fn with_test_tools(entries: &[(&str, &str)]) -> Self {
+        use mcp_types::ToolInputSchema;
+
+        let mut tools = HashMap::new();
+        for (server, tool_name) in entries {
+            let qualified =
+                format!("mcp{MCP_TOOL_NAME_DELIMITER}{server}{MCP_TOOL_NAME_DELIMITER}{tool_name}");
+            let tool = Tool {
+                annotations: None,
+                description: None,
+                input_schema: ToolInputSchema {
+                    properties: None,
+                    required: None,
+                    r#type: "object".to_string(),
+                },
+                name: (*tool_name).to_string(),
+                output_schema: None,
+                title: None,
+            };
+            tools.insert(
+                qualified,
+                ToolInfo {
+                    server_name: (*server).to_string(),
+                    tool_name: (*tool_name).to_string(),
+                    tool,
+                },
+            );
+        }
+
+        Self {
+            clients: HashMap::new(),
+            tools,
+            tool_filters: HashMap::new(),
+        }
     }
 }
 

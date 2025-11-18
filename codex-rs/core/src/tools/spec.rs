@@ -4,6 +4,7 @@ use crate::features::Feature;
 use crate::features::Features;
 use crate::model_family::ModelFamily;
 use crate::tools::handlers::PLAN_TOOL;
+use crate::tools::handlers::PlanHandler;
 use crate::tools::handlers::apply_patch::ApplyPatchToolType;
 use crate::tools::handlers::apply_patch::create_apply_patch_freeform_tool;
 use crate::tools::handlers::apply_patch::create_apply_patch_json_tool;
@@ -38,6 +39,7 @@ pub(crate) struct ToolsConfig {
 pub(crate) enum ToolMode {
     Standard,
     Manager,
+    Ceo,
 }
 
 pub(crate) struct ToolsConfigParams<'a> {
@@ -242,6 +244,15 @@ fn create_delegate_worker_tool() -> ToolSpec {
         },
     );
     properties.insert(
+        "persona".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional persona/role instructions appended to the worker's developer instructions when starting a worker."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
         "worker_id".to_string(),
         JsonSchema::String {
             description: Some(
@@ -262,6 +273,74 @@ fn create_delegate_worker_tool() -> ToolSpec {
         name: "delegate_worker".to_string(),
         description:
             "Delegates a task to a worker agent that can run tools, execute commands, and edit files.".to_string(),
+        strict: false,
+        parameters: JsonSchema::Object {
+            properties,
+            required: None,
+            additional_properties: Some(false.into()),
+        },
+    })
+}
+
+fn create_delegate_manager_tool() -> ToolSpec {
+    let mut properties = BTreeMap::new();
+    properties.insert(
+        "objective".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Clear statement of what the delegated manager should accomplish.".to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "context".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional additional background, code snippets, or requirements for the manager."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "persona".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional persona/role instructions appended to the manager's developer instructions when starting a manager."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "manager_model".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Optional override for the manager's model. Defaults to the configured manager model."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "manager_id".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Existing manager identifier returned by a previous delegate_manager call. Required when messaging or closing a manager."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
+        "action".to_string(),
+        JsonSchema::String {
+            description: Some(
+                "Action to perform: \"start\" (default), \"message\" to resume a manager, or \"close\" to shut it down."
+                    .to_string(),
+            ),
+        },
+    );
+
+    ToolSpec::Function(ResponsesApiTool {
+        name: "delegate_manager".to_string(),
+        description: "Delegates a task to a manager agent that can plan work and spawn workers via delegate_worker.".to_string(),
         strict: false,
         parameters: JsonSchema::Object {
             properties,
@@ -993,12 +1072,11 @@ pub(crate) fn build_specs(
     mcp_tools: Option<HashMap<String, mcp_types::Tool>>,
 ) -> ToolRegistryBuilder {
     use crate::tools::handlers::ApplyPatchHandler;
-    use crate::tools::handlers::DelegateWorkerHandler;
+    use crate::tools::handlers::DelegateAgentHandler;
     use crate::tools::handlers::GrepFilesHandler;
     use crate::tools::handlers::ListDirHandler;
     use crate::tools::handlers::McpHandler;
     use crate::tools::handlers::McpResourceHandler;
-    use crate::tools::handlers::PlanHandler;
     use crate::tools::handlers::ReadFileHandler;
     use crate::tools::handlers::ShellCommandHandler;
     use crate::tools::handlers::ShellHandler;
@@ -1018,12 +1096,17 @@ pub(crate) fn build_specs(
     let mcp_resource_handler = Arc::new(McpResourceHandler);
     let shell_command_handler = Arc::new(ShellCommandHandler);
 
+    if matches!(config.mode, ToolMode::Ceo) {
+        let delegate_handler = Arc::new(DelegateAgentHandler::manager());
+        builder.push_spec(create_delegate_manager_tool());
+        builder.register_handler("delegate_manager", delegate_handler);
+        return builder;
+    }
+
     if matches!(config.mode, ToolMode::Manager) {
-        let delegate_handler = Arc::new(DelegateWorkerHandler);
+        let delegate_handler = Arc::new(DelegateAgentHandler::worker());
         builder.push_spec(create_delegate_worker_tool());
         builder.register_handler("delegate_worker", delegate_handler);
-        builder.push_spec(PLAN_TOOL.clone());
-        builder.register_handler("update_plan", plan_handler);
         return builder;
     }
 

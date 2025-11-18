@@ -71,6 +71,13 @@ pub(crate) enum AppEvent {
         worker_reasoning: Option<Option<ReasoningEffort>>,
         persist: bool,
     },
+    /// Apply CEO orchestration updates.
+    UpdateCeoSettings {
+        enabled: Option<bool>,
+        ceo_model: Option<Option<String>>,
+        ceo_reasoning: Option<Option<ReasoningEffort>>,
+        persist: bool,
+    },
 
     /// Open the reasoning selection popup after picking a model.
     OpenReasoningPopup {
@@ -188,4 +195,5 @@ pub(crate) enum FeedbackCategory {
 pub(crate) enum ManagerModelTarget {
     Manager,
     Worker,
+    Ceo,
 }

@@ -56,6 +56,7 @@ use crate::ModelProviderInfo;
 use crate::client::ModelClient;
 use crate::client_common::Prompt;
 use crate::client_common::ResponseEvent;
+use crate::config::CeoConfig;
 use crate::config::Config;
 use crate::config::ManagerConfig;
 use crate::config::types::McpServerTransportConfig;
@@ -137,6 +138,7 @@ use codex_protocol::models::ContentItem;
 use codex_protocol::models::FunctionCallOutputPayload;
 use codex_protocol::models::ResponseInputItem;
 use codex_protocol::models::ResponseItem;
+use codex_protocol::protocol::DelegateAgentKind;
 use codex_protocol::protocol::InitialHistory;
 use codex_protocol::user_input::UserInput;
 use codex_utils_readiness::Readiness;
@@ -151,6 +153,7 @@ pub struct Codex {
 }
 
 const MANAGER_PROMPT: &str = include_str!("../manager_prompt.md");
+const CEO_PROMPT: &str = include_str!("../ceo_prompt.md");
 
 /// Wrapper returned by [`Codex::spawn`] containing the spawned [`Codex`],
 /// the submission id for the initial `ConfigureSession` request and the
@@ -161,6 +164,8 @@ pub struct CodexSpawnOk {
 }
 
 pub(crate) const INITIAL_SUBMIT_ID: &str = "";
+const MANAGER_MCP_HINT_MAX_SERVERS: usize = 4;
+const MANAGER_MCP_HINT_MAX_TOOLS_PER_SERVER: usize = 5;
 pub(crate) const SUBMISSION_CHANNEL_CAPACITY: usize = 64;
 
 impl Codex {
@@ -197,6 +202,7 @@ impl Codex {
             original_config_do_not_use: Arc::clone(&config),
             features: config.features.clone(),
             manager: config.manager.clone(),
+            ceo: config.ceo.clone(),
             session_source,
         };
 
@@ -318,7 +324,9 @@ fn session_base_instructions(config: &Config) -> Option<String> {
 
 fn session_developer_instructions(config: &Config) -> Option<String> {
     let mut segments = Vec::new();
-    if config.manager.enabled {
+    if config.ceo.enabled {
+        segments.push(CEO_PROMPT.trim().to_string());
+    } else if config.manager.enabled {
         segments.push(MANAGER_PROMPT.trim().to_string());
     }
     if let Some(dev) = config
@@ -335,8 +343,58 @@ fn session_developer_instructions(config: &Config) -> Option<String> {
     }
 }
 
+fn manager_mcp_hint(manager: &McpConnectionManager) -> Option<String> {
+    let grouped = manager.tool_names_by_server();
+    if grouped.is_empty() {
+        return None;
+    }
+
+    let total_servers = grouped.len();
+    let mut lines = Vec::new();
+    for (idx, (server, mut tools)) in grouped.into_iter().enumerate() {
+        if idx == MANAGER_MCP_HINT_MAX_SERVERS {
+            break;
+        }
+        if tools.is_empty() {
+            continue;
+        }
+        let remaining = tools
+            .len()
+            .saturating_sub(MANAGER_MCP_HINT_MAX_TOOLS_PER_SERVER);
+        tools.truncate(MANAGER_MCP_HINT_MAX_TOOLS_PER_SERVER);
+        let mut line = format!("- {server}: {}", tools.join(", "));
+        if remaining > 0 {
+            line.push_str(&format!(" (+{remaining} more)"));
+        }
+        lines.push(line);
+    }
+
+    if lines.is_empty() {
+        return None;
+    }
+
+    let mut hint = String::from("Workers can access MCP servers:");
+    hint.push('\n');
+    hint.push_str(&lines.join("\n"));
+
+    if total_servers > MANAGER_MCP_HINT_MAX_SERVERS {
+        hint.push_str(&format!(
+            "\n(Showing first {MANAGER_MCP_HINT_MAX_SERVERS} of {total_servers} servers.)"
+        ));
+    }
+
+    hint.push_str("\nUse names like mcp__server__tool when instructing workers to call them.");
+    Some(hint)
+}
+
 fn session_model(config: &Config) -> String {
-    if config.manager.enabled {
+    if config.ceo.enabled {
+        config
+            .ceo
+            .ceo_model
+            .clone()
+            .unwrap_or_else(|| config.model.clone())
+    } else if config.manager.enabled {
         config
             .manager
             .manager_model
@@ -348,7 +406,12 @@ fn session_model(config: &Config) -> String {
 }
 
 fn session_reasoning_effort(config: &Config) -> Option<ReasoningEffortConfig> {
-    if config.manager.enabled {
+    if config.ceo.enabled {
+        config
+            .ceo
+            .ceo_reasoning_effort
+            .or(config.model_reasoning_effort)
+    } else if config.manager.enabled {
         config
             .manager
             .manager_reasoning_effort
@@ -399,6 +462,7 @@ pub(crate) struct SessionConfiguration {
     /// Set of feature flags for this session
     features: Features,
     manager: ManagerConfig,
+    ceo: CeoConfig,
 
     // TODO(pakrym): Remove config from here
     original_config_do_not_use: Arc<Config>,
@@ -479,7 +543,9 @@ impl Session {
             session_configuration.session_source.clone(),
         );
 
-        let tool_mode = if session_configuration.manager.enabled {
+        let tool_mode = if session_configuration.ceo.enabled {
+            ToolMode::Ceo
+        } else if session_configuration.manager.enabled {
             ToolMode::Manager
         } else {
             ToolMode::Standard
@@ -734,9 +800,9 @@ impl Session {
         format!("auto-compact-{id}")
     }
 
-    pub(crate) async fn allocate_worker_id(&self) -> String {
+    pub(crate) async fn allocate_worker_id(&self, kind: DelegateAgentKind) -> String {
         let mut guard = self.managed_workers.lock().await;
-        guard.allocate_id()
+        guard.allocate_id(kind)
     }
 
     pub(crate) async fn insert_worker(&self, worker: Arc<ManagedWorker>) {
@@ -886,6 +952,15 @@ impl Session {
         );
         if let Some(final_schema) = updates.final_output_json_schema {
             turn_context.final_output_json_schema = final_schema;
+        }
+        if matches!(turn_context.tools_config.mode, ToolMode::Manager)
+            && let Some(hint) = manager_mcp_hint(&self.services.mcp_connection_manager)
+        {
+            let updated = match turn_context.developer_instructions.take() {
+                Some(existing) => format!("{existing}\n\n{hint}"),
+                None => hint,
+            };
+            turn_context.developer_instructions = Some(updated);
         }
         Arc::new(turn_context)
     }
@@ -1314,12 +1389,15 @@ impl Session {
         turn_context: &TurnContext,
         worker_id: impl Into<String>,
         worker_model: impl Into<String>,
+        agent_kind: DelegateAgentKind,
         status: DelegateWorkerStatusKind,
         message: impl Into<String>,
     ) {
         let event = EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: worker_id.into(),
             worker_model: worker_model.into(),
+            agent_kind,
+            parent_worker_id: None,
             status,
             message: message.into(),
         });
@@ -2665,6 +2743,47 @@ mod tests {
     }
 
     #[test]
+    fn manager_mcp_hint_is_none_with_no_servers() {
+        assert!(manager_mcp_hint(&McpConnectionManager::default()).is_none());
+    }
+
+    #[test]
+    fn manager_mcp_hint_lists_available_tools() {
+        let manager = McpConnectionManager::with_test_tools(&[
+            ("docs", "search"),
+            ("docs", "summarize"),
+            ("github", "prs"),
+        ]);
+
+        let hint = manager_mcp_hint(&manager).expect("hint");
+        assert!(hint.contains("docs: search, summarize"));
+        assert!(hint.contains("github: prs"));
+        assert!(hint.contains("mcp__server__tool"));
+    }
+
+    #[test]
+    fn manager_turn_appends_mcp_hint_to_instructions() {
+        let (mut session, _) = make_session_and_context();
+        session.services.mcp_connection_manager =
+            McpConnectionManager::with_test_tools(&[("docs", "search")]);
+
+        tokio_test::block_on(async {
+            {
+                let mut state = session.state.lock().await;
+                state.session_configuration.manager.enabled = true;
+            }
+
+            let turn = session.new_turn(SessionSettingsUpdate::default()).await;
+            let developer = turn
+                .developer_instructions
+                .as_deref()
+                .expect("developer instructions");
+            assert!(developer.contains("Workers can access MCP servers:"));
+            assert!(developer.contains("docs: search"));
+        });
+    }
+
+    #[test]
     fn prefers_structured_content_when_present() {
         let ctr = CallToolResult {
             // Content present but should be ignored because structured_content is set.
@@ -2822,6 +2941,7 @@ mod tests {
             original_config_do_not_use: Arc::clone(&config),
             features: Features::default(),
             manager: config.manager.clone(),
+            ceo: config.ceo.clone(),
             session_source: SessionSource::Exec,
         };
 
@@ -2905,6 +3025,7 @@ mod tests {
             original_config_do_not_use: Arc::clone(&config),
             features: Features::default(),
             manager: config.manager.clone(),
+            ceo: config.ceo.clone(),
             session_source: SessionSource::Exec,
         };
 

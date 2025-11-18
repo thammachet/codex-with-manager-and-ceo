@@ -670,6 +670,76 @@ impl App {
                         .add_error_message(format!("Failed to persist manager settings: {err}"));
                 }
             }
+            AppEvent::UpdateCeoSettings {
+                enabled,
+                ceo_model,
+                ceo_reasoning,
+                persist,
+            } => {
+                let mut mutated = false;
+                if let Some(new_state) = enabled
+                    && self.config.ceo.enabled != new_state
+                {
+                    self.config.ceo.enabled = new_state;
+                    let message = if new_state {
+                        "CEO layer enabled. Start a new session (/new) to apply."
+                    } else {
+                        "CEO layer disabled. Start a new session (/new) to apply."
+                    };
+                    self.chat_widget.add_info_message(message.to_string(), None);
+                    mutated = true;
+                }
+                if let Some(model_update) = ceo_model
+                    && self.config.ceo.ceo_model != model_update
+                {
+                    self.config.ceo.ceo_model = model_update.clone();
+                    let display = model_update
+                        .clone()
+                        .unwrap_or_else(|| self.config.model.clone());
+                    let message = if model_update.is_some() {
+                        format!("CEO model set to {display}. Start a new session (/new) to apply.")
+                    } else {
+                        format!(
+                            "CEO now uses the session model ({display}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if let Some(reasoning_update) = ceo_reasoning
+                    && self.config.ceo.ceo_reasoning_effort != reasoning_update
+                {
+                    self.config.ceo.ceo_reasoning_effort = reasoning_update;
+                    let base_label = self
+                        .config
+                        .model_reasoning_effort
+                        .map(|eff| eff.to_string())
+                        .unwrap_or_else(|| "auto".to_string());
+                    let message = if let Some(effort) = reasoning_update {
+                        let label = effort.to_string();
+                        format!(
+                            "CEO reasoning set to {label}. Start a new session (/new) to apply."
+                        )
+                    } else {
+                        format!(
+                            "CEO now uses the session reasoning ({base_label}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if persist
+                    && mutated
+                    && let Err(err) = ConfigEditsBuilder::new(&self.config.codex_home)
+                        .with_profile(self.active_profile.as_deref())
+                        .set_ceo_config(&self.config.ceo)
+                        .apply()
+                        .await
+                {
+                    self.chat_widget
+                        .add_error_message(format!("Failed to persist CEO settings: {err}"));
+                }
+            }
             AppEvent::UpdateAskForApprovalPolicy(policy) => {
                 self.chat_widget.set_approval_policy(policy);
             }

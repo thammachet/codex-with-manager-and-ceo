@@ -1302,12 +1302,29 @@ pub enum DelegateWorkerStatusKind {
     Failed,
 }
 
+#[derive(Debug, Clone, Copy, Deserialize, Serialize, JsonSchema, TS, PartialEq, Eq, Default)]
+#[serde(rename_all = "snake_case")]
+#[ts(rename_all = "snake_case")]
+pub enum DelegateAgentKind {
+    #[default]
+    Worker,
+    Manager,
+}
+
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]
 pub struct DelegateWorkerStatusEvent {
     pub worker_id: String,
     pub worker_model: String,
+    #[serde(default = "default_delegate_agent_kind")]
+    pub agent_kind: DelegateAgentKind,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_worker_id: Option<String>,
     pub status: DelegateWorkerStatusKind,
     pub message: String,
+}
+
+const fn default_delegate_agent_kind() -> DelegateAgentKind {
+    DelegateAgentKind::Worker
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, JsonSchema, TS)]

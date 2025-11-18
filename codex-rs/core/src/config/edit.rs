@@ -1,4 +1,5 @@
 use crate::config::CONFIG_TOML_FILE;
+use crate::config::CeoConfig;
 use crate::config::ManagerConfig;
 use crate::config::types::McpServerConfig;
 use crate::config::types::Notice;
@@ -29,6 +30,12 @@ pub enum ConfigEdit {
         worker_model: Option<String>,
         manager_reasoning_effort: Option<ReasoningEffort>,
         worker_reasoning_effort: Option<ReasoningEffort>,
+    },
+    /// Update the CEO orchestration settings.
+    SetCeoConfig {
+        enabled: bool,
+        ceo_model: Option<String>,
+        ceo_reasoning_effort: Option<ReasoningEffort>,
     },
     /// Toggle the acknowledgement flag under `[notice]`.
     SetNoticeHideFullAccessWarning(bool),
@@ -277,6 +284,24 @@ impl ConfigDocument {
                     mutated |= self.write_reasoning_value(
                         &["manager", "worker_reasoning_effort"],
                         *worker_reasoning_effort,
+                    );
+                    Ok(mutated)
+                }
+            }
+            ConfigEdit::SetCeoConfig {
+                enabled,
+                ceo_model,
+                ceo_reasoning_effort,
+            } => {
+                if !enabled && ceo_model.is_none() && ceo_reasoning_effort.is_none() {
+                    Ok(self.clear(Scope::Global, &["ceo"]))
+                } else {
+                    let mut mutated =
+                        self.write_value(Scope::Global, &["ceo", "enabled"], value(*enabled));
+                    mutated |= self.write_optional_global(&["ceo", "ceo_model"], ceo_model);
+                    mutated |= self.write_reasoning_value(
+                        &["ceo", "ceo_reasoning_effort"],
+                        *ceo_reasoning_effort,
                     );
                     Ok(mutated)
                 }
@@ -556,6 +581,15 @@ impl ConfigEditsBuilder {
             worker_model: manager.worker_model.clone(),
             manager_reasoning_effort: manager.manager_reasoning_effort,
             worker_reasoning_effort: manager.worker_reasoning_effort,
+        });
+        self
+    }
+
+    pub fn set_ceo_config(mut self, ceo: &CeoConfig) -> Self {
+        self.edits.push(ConfigEdit::SetCeoConfig {
+            enabled: ceo.enabled,
+            ceo_model: ceo.ceo_model.clone(),
+            ceo_reasoning_effort: ceo.ceo_reasoning_effort,
         });
         self
     }
@@ -1071,6 +1105,33 @@ worker_reasoning_effort = "low"
         assert_eq!(contents, expected);
     }
 
+    #[tokio::test]
+    async fn async_builder_set_ceo_config_persists() {
+        let tmp = tempdir().expect("tmpdir");
+        let codex_home = tmp.path().to_path_buf();
+
+        let ceo = CeoConfig {
+            enabled: true,
+            ceo_model: Some("gpt-5.1-codex".to_string()),
+            ceo_reasoning_effort: Some(ReasoningEffort::Medium),
+        };
+
+        ConfigEditsBuilder::new(&codex_home)
+            .set_ceo_config(&ceo)
+            .apply()
+            .await
+            .expect("persist");
+
+        let contents =
+            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+        let expected = r#"[ceo]
+enabled = true
+ceo_model = "gpt-5.1-codex"
+ceo_reasoning_effort = "medium"
+"#;
+        assert_eq!(contents, expected);
+    }
+
     #[test]
     fn blocking_builder_set_model_round_trips_back_and_forth() {
         let tmp = tempdir().expect("tmpdir");
@@ -1131,6 +1192,32 @@ model_reasoning_effort = "high"
         let contents =
             std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
         assert!(!contents.contains("manager"));
+    }
+
+    #[test]
+    fn blocking_builder_clear_ceo_config_removes_table() {
+        let tmp = tempdir().expect("tmpdir");
+        let codex_home = tmp.path();
+
+        let ceo = CeoConfig {
+            enabled: true,
+            ceo_model: Some("gpt-5.1-codex".to_string()),
+            ceo_reasoning_effort: Some(ReasoningEffort::High),
+        };
+        ConfigEditsBuilder::new(codex_home)
+            .set_ceo_config(&ceo)
+            .apply_blocking()
+            .expect("persist initial");
+
+        let cleared = CeoConfig::default();
+        ConfigEditsBuilder::new(codex_home)
+            .set_ceo_config(&cleared)
+            .apply_blocking()
+            .expect("clear ceo");
+
+        let contents =
+            std::fs::read_to_string(codex_home.join(CONFIG_TOML_FILE)).expect("read config");
+        assert!(!contents.contains("ceo"));
     }
 
     #[test]

@@ -70,6 +70,10 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         worker_model,
         manager_reasoning: manager_reasoning_cli,
         worker_reasoning: worker_reasoning_cli,
+        ceo,
+        no_ceo,
+        ceo_model,
+        ceo_reasoning: ceo_reasoning_cli,
         color,
         last_message_file,
         json: json_mode,
@@ -177,8 +181,16 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
     } else {
         None
     };
+    let ceo_enabled = if ceo {
+        Some(true)
+    } else if no_ceo {
+        Some(false)
+    } else {
+        None
+    };
     let manager_reasoning = manager_reasoning_cli.map(ReasoningEffort::from);
     let worker_reasoning = worker_reasoning_cli.map(ReasoningEffort::from);
+    let ceo_reasoning = ceo_reasoning_cli.map(ReasoningEffort::from);
 
     // Load configuration and determine approval policy
     let overrides = ConfigOverrides {
@@ -204,6 +216,9 @@ pub async fn run_main(cli: Cli, codex_linux_sandbox_exe: Option<PathBuf>) -> any
         worker_model,
         manager_reasoning_effort: manager_reasoning,
         worker_reasoning_effort: worker_reasoning,
+        ceo_enabled,
+        ceo_model,
+        ceo_reasoning_effort: ceo_reasoning,
     };
     // Parse `-c` overrides.
     let cli_kv_overrides = match config_overrides.parse_overrides() {

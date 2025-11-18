@@ -4,6 +4,7 @@
 use std::time::Duration;
 use std::time::Instant;
 
+use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::Op;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
@@ -20,10 +21,58 @@ use crate::render::renderable::Renderable;
 use crate::shimmer::shimmer_spans;
 use crate::tui::FrameRequester;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AgentRole {
+    Ceo,
+    Manager,
+    Worker,
+}
+
+impl AgentRole {
+    fn label(self) -> &'static str {
+        match self {
+            AgentRole::Ceo => "CEO",
+            AgentRole::Manager => "Manager",
+            AgentRole::Worker => "Worker",
+        }
+    }
+
+    fn short_label(self) -> &'static str {
+        match self {
+            AgentRole::Ceo => "CEO",
+            AgentRole::Manager => "Mgr",
+            AgentRole::Worker => "Wkr",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct AgentStatusEntry {
+    pub(crate) role: AgentRole,
+    pub(crate) worker_id: Option<String>,
+    pub(crate) worker_model: Option<String>,
+    pub(crate) message: String,
+    pub(crate) depth: u16,
+    pub(crate) status: DelegateWorkerStatusKind,
+    pub(crate) updated_at: Instant,
+}
+
+impl AgentStatusEntry {
+    fn is_terminal(&self) -> bool {
+        matches!(
+            self.status,
+            DelegateWorkerStatusKind::Completed | DelegateWorkerStatusKind::Failed
+        )
+    }
+}
+
 pub(crate) struct StatusIndicatorWidget {
     /// Animated header text (defaults to "Working").
     header: String,
     show_interrupt_hint: bool,
+    top_role: AgentRole,
+    agent_rows: Vec<AgentStatusEntry>,
+    header_updated_at: Instant,
 
     elapsed_running: Duration,
     last_resume_at: Instant,
@@ -54,6 +103,9 @@ impl StatusIndicatorWidget {
         Self {
             header: String::from("Working"),
             show_interrupt_hint: true,
+            top_role: AgentRole::Worker,
+            agent_rows: Vec::new(),
+            header_updated_at: Instant::now(),
             elapsed_running: Duration::ZERO,
             last_resume_at: Instant::now(),
             is_paused: false,
@@ -70,6 +122,7 @@ impl StatusIndicatorWidget {
     /// Update the animated header label (left of the brackets).
     pub(crate) fn update_header(&mut self, header: String) {
         self.header = header;
+        self.header_updated_at = Instant::now();
     }
 
     #[cfg(test)]
@@ -84,6 +137,20 @@ impl StatusIndicatorWidget {
     #[cfg(test)]
     pub(crate) fn interrupt_hint_visible(&self) -> bool {
         self.show_interrupt_hint
+    }
+
+    pub(crate) fn update_agent_hierarchy(
+        &mut self,
+        top_role: AgentRole,
+        agent_rows: Vec<AgentStatusEntry>,
+    ) {
+        self.top_role = top_role;
+        self.agent_rows = agent_rows;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn agent_rows(&self) -> &[AgentStatusEntry] {
+        &self.agent_rows
     }
 
     pub(crate) fn pause_timer(&mut self) {
@@ -130,7 +197,7 @@ impl StatusIndicatorWidget {
 
 impl Renderable for StatusIndicatorWidget {
     fn desired_height(&self, _width: u16) -> u16 {
-        1
+        1u16.saturating_add(self.agent_rows.len().try_into().unwrap_or(u16::MAX))
     }
 
     fn render(&self, area: Rect, buf: &mut Buffer) {
@@ -146,22 +213,93 @@ impl Renderable for StatusIndicatorWidget {
         let pretty_elapsed = fmt_elapsed_compact(elapsed_duration.as_secs());
 
         // Plain rendering: no borders or padding so the live cell is visually indistinguishable from terminal scrollback.
-        let mut spans = Vec::with_capacity(5);
-        spans.push(spinner(Some(self.last_resume_at)));
-        spans.push(" ".into());
-        spans.extend(shimmer_spans(&self.header));
-        spans.push(" ".into());
+        let mut lines: Vec<Line> = Vec::with_capacity(1 + self.agent_rows.len());
+        let mut top_spans = Vec::with_capacity(7);
+        top_spans.push(spinner(Some(self.last_resume_at)));
+        top_spans.push(" ".into());
+        top_spans.push(self.top_role.label().bold());
+        top_spans.push(" ".dim());
+        top_spans.push("·".dim());
+        top_spans.push(" ".dim());
+        top_spans.extend(shimmer_spans(&self.header));
+        top_spans.push(" ".into());
+        let since_update = now.saturating_duration_since(self.header_updated_at);
+        top_spans.push(
+            format!(
+                "updated {} ago",
+                fmt_elapsed_compact(since_update.as_secs())
+            )
+            .dim(),
+        );
+        top_spans.push(" ".into());
         if self.show_interrupt_hint {
-            spans.extend(vec![
+            top_spans.extend(vec![
                 format!("({pretty_elapsed} • ").dim(),
                 key_hint::plain(KeyCode::Esc).into(),
                 " to interrupt)".dim(),
             ]);
         } else {
-            spans.push(format!("({pretty_elapsed})").dim());
+            top_spans.push(format!("({pretty_elapsed})").dim());
+        }
+        lines.push(Line::from(top_spans));
+
+        let now = Instant::now();
+        for row in &self.agent_rows {
+            let mut spans = Vec::new();
+            let depth = usize::from(row.depth);
+            if depth > 0 {
+                spans.push("  ".repeat(depth).into());
+            }
+            let status_span = match row.status {
+                DelegateWorkerStatusKind::Completed => "+".green(),
+                DelegateWorkerStatusKind::Failed => "x".red(),
+                DelegateWorkerStatusKind::Warning => "!".magenta(),
+                DelegateWorkerStatusKind::RunningCommand
+                | DelegateWorkerStatusKind::RunningTool
+                | DelegateWorkerStatusKind::ApplyingPatch
+                | DelegateWorkerStatusKind::DiffApplied
+                | DelegateWorkerStatusKind::Starting
+                | DelegateWorkerStatusKind::Running => "-".dim(),
+            };
+            spans.push(status_span);
+            spans.push(" ".into());
+            spans.push(row.role.short_label().bold());
+            if let Some(worker_id) = &row.worker_id {
+                spans.push(" ".into());
+                spans.push(worker_id.as_str().dim());
+                if let Some(worker_model) = &row.worker_model {
+                    spans.push(" ".into());
+                    spans.push(format!("({worker_model})").dim());
+                }
+            }
+            spans.push(" ".into());
+            spans.push("·".dim());
+            spans.push(" ".dim());
+            let message_span = match row.status {
+                DelegateWorkerStatusKind::Failed => row.message.clone().red(),
+                DelegateWorkerStatusKind::Warning => row.message.clone().magenta(),
+                _ if row.is_terminal() => row.message.clone().dim(),
+                _ => row.message.clone().into(),
+            };
+            spans.push(message_span);
+            let age = now.saturating_duration_since(row.updated_at);
+            spans.push(" ".into());
+            spans.push(format!("({} ago)", fmt_elapsed_compact(age.as_secs())).dim());
+            lines.push(Line::from(spans));
         }
 
-        Line::from(spans).render_ref(area, buf);
+        for (idx, line) in lines.into_iter().enumerate() {
+            if idx as u16 >= area.height {
+                break;
+            }
+            let row_area = Rect {
+                x: area.x,
+                y: area.y + idx as u16,
+                width: area.width,
+                height: 1,
+            };
+            line.render_ref(row_area, buf);
+        }
     }
 }
 

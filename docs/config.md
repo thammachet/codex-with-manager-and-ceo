@@ -83,12 +83,28 @@ worker_reasoning_effort = "medium"   # optional; workers fall back to the manage
 - Use `codex --manager` (or `codex exec --manager`) to turn the layer on for a session, `--no-manager` to force direct worker control, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files.
 - Use `--manager-reasoning <none|minimal|low|medium|high>` and `--worker-reasoning <…>` to pin reasoning effort for each layer without editing config files. Omit the flags (or remove the TOML keys) to inherit the session’s reasoning defaults.
 - When the manager layer is active, your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
-- Worker-specific instructions should be included in the objective/context passed to `delegate_worker`; the manager prompt already forbids direct tool usage and summarizes worker output for you.
-- The interactive UI surfaces a live "Worker status" hint (e.g., `Running cargo test · worker-3`) whenever the manager is waiting on a worker, so you can confirm progress without scrolling through extra log lines.
+- Worker-specific instructions should either go into the optional `persona` field on `delegate_worker` (for persistent tone/role changes) or the objective/context (for per-task nuances). The manager prompt already forbids direct tool usage and summarizes worker output for you.
+- Managers automatically see a condensed list of configured MCP servers + tools so they know what capabilities their workers can call.
+- The interactive UI surfaces a live "Worker status" hint (e.g., `Running cargo test · worker-3`) whenever the manager is waiting on a worker, so you can confirm progress without scrolling through extra log lines. When the CEO layer is enabled, this view now shows the full CEO → manager → worker hierarchy and retains each agent’s last reported status even after it finishes so you can see the entire delegation path.
 
 Every worker response now includes `Worker ID: worker-#`. Supply that ID plus `action = "message"` and a new `objective` in the next `delegate_worker` call to resume the same worker, or `action = "close"` to release it explicitly.
 
 - Use `blocking = false` when launching or messaging a worker to let that turn run asynchronously while you dispatch additional `delegate_worker` calls. Finish the turn later with `action = "await"` and check in without blocking via `action = "status"`. Always `await` a pending turn before sending the worker another objective.
+
+### ceo
+
+For even higher-level coordination, Codex can add a CEO layer above the manager. The CEO never calls tools directly; it only delegates to managers via `delegate_manager`, pushes them to produce PRE_IMPLEMENTATION_PLAN / VALIDATION / PROGRESS_REPORT deliverables, and synthesizes the final answer once managers have finished.
+
+```toml
+[ceo]
+enabled = true
+ceo_model = "gpt-5.1"
+ceo_reasoning_effort = "high"
+```
+
+- Use `codex --ceo` / `codex exec --ceo` to enable the layer for a session, `--no-ceo` to disable it, and `--ceo-model <slug>` / `--ceo-reasoning <…>` to override its model or reasoning effort without editing config.
+- CEOs rely on your manager/worker settings for the layers beneath them, so you can mix models (for example: CEO on a reasoning-heavy model, managers on a fast planning model, workers on the default coding model).
+- Every delegated manager returns a `Manager ID`. Resume it with `action = "message"`, poll its progress with `action = "status"`, and release it with `action = "close"` just like workers.
 
 ### model_providers
 
