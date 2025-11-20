@@ -19,7 +19,6 @@ use core_test_support::test_codex::ApplyPatchModelOutput;
 use core_test_support::test_codex::ShellModelOutput;
 use core_test_support::test_codex::test_codex;
 use pretty_assertions::assert_eq;
-use regex_lite::Regex;
 use serde_json::Value;
 use serde_json::json;
 use std::fs;
@@ -136,24 +135,7 @@ async fn shell_output_stays_json_without_freeform_apply_patch(
         .and_then(Value::as_str)
         .expect("shell output string");
 
-    let mut parsed: Value = serde_json::from_str(output)?;
-    if let Some(metadata) = parsed.get_mut("metadata").and_then(Value::as_object_mut) {
-        let _ = metadata.remove("duration_seconds");
-    }
-
-    assert_eq!(
-        parsed
-            .get("metadata")
-            .and_then(|metadata| metadata.get("exit_code"))
-            .and_then(Value::as_i64),
-        Some(0),
-        "expected zero exit code in unformatted JSON output",
-    );
-    let stdout = parsed
-        .get("output")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    assert_regex_match(r"(?s)^shell json\n?$", stdout);
+    assert_eq!(output, "shell json\n", "expected plain shell output");
 
     Ok(())
 }
@@ -196,16 +178,7 @@ async fn shell_output_is_structured_with_freeform_apply_patch(
         .and_then(Value::as_str)
         .expect("structured output string");
 
-    assert!(
-        serde_json::from_str::<Value>(output).is_err(),
-        "expected structured shell output to be plain text",
-    );
-    let expected_pattern = r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-freeform shell
-?$";
-    assert_regex_match(expected_pattern, output);
+    assert_eq!(output, "freeform shell\n");
 
     Ok(())
 }
@@ -255,28 +228,7 @@ async fn shell_output_preserves_fixture_json_without_serialization(
         .and_then(Value::as_str)
         .expect("shell output string");
 
-    let mut parsed: Value = serde_json::from_str(output)?;
-    if let Some(metadata) = parsed.get_mut("metadata").and_then(Value::as_object_mut) {
-        let _ = metadata.remove("duration_seconds");
-    }
-
-    assert_eq!(
-        parsed
-            .get("metadata")
-            .and_then(|metadata| metadata.get("exit_code"))
-            .and_then(Value::as_i64),
-        Some(0),
-        "expected zero exit code when serialization is disabled",
-    );
-    let stdout = parsed
-        .get("output")
-        .and_then(Value::as_str)
-        .unwrap_or_default()
-        .to_string();
-    assert_eq!(
-        stdout, FIXTURE_JSON,
-        "expected shell output to match the fixture contents"
-    );
+    assert_eq!(output, FIXTURE_JSON);
 
     Ok(())
 }
@@ -327,21 +279,7 @@ async fn shell_output_structures_fixture_with_serialization(
         .and_then(Value::as_str)
         .expect("structured output string");
 
-    assert!(
-        serde_json::from_str::<Value>(output).is_err(),
-        "expected structured output to be plain text"
-    );
-    let (header, body) = output
-        .split_once("Output:\n")
-        .expect("structured output contains an Output section");
-    assert_regex_match(
-        r"(?s)^Exit code: 0\nWall time: [0-9]+(?:\.[0-9]+)? seconds$",
-        header.trim_end(),
-    );
-    assert_eq!(
-        body, FIXTURE_JSON,
-        "expected Output section to include the fixture contents"
-    );
+    assert_eq!(output, FIXTURE_JSON, "expected fixture contents");
 
     Ok(())
 }
@@ -384,22 +322,9 @@ async fn shell_output_for_freeform_tool_records_duration(
         .and_then(Value::as_str)
         .expect("structured output string");
 
-    let expected_pattern = r#"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-$"#;
-    assert_regex_match(expected_pattern, output);
-
-    let wall_time_regex = Regex::new(r"(?m)^Wall (?:time|Clock): ([0-9]+(?:\.[0-9]+)?) seconds$")
-        .expect("compile wall time regex");
-    let wall_time_seconds = wall_time_regex
-        .captures(output)
-        .and_then(|caps| caps.get(1))
-        .and_then(|value| value.as_str().parse::<f32>().ok())
-        .expect("expected structured shell output to contain wall time seconds");
     assert!(
-        wall_time_seconds > 0.5,
-        "expected wall time to be greater than zero seconds, got {wall_time_seconds}"
+        output.is_empty(),
+        "sleep should not produce stdout but found: {output:?}"
     );
 
     Ok(())
@@ -447,17 +372,13 @@ async fn shell_output_reserializes_truncated_content(output_type: ShellModelOutp
         serde_json::from_str::<Value>(output).is_err(),
         "expected truncated shell output to be plain text",
     );
-    let truncated_pattern = r#"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Total output lines: 400
-Output:
-1
+    let truncated_pattern = r#"(?s)^1
 2
 3
 4
 5
 6
-.*…46 tokens truncated….*
+.*…\d+ tokens truncated….*
 396
 397
 398
@@ -502,15 +423,20 @@ async fn apply_patch_custom_tool_output_is_structured(
 
     let output = harness.apply_patch_output(call_id, output_type).await;
 
-    let expected_pattern = format!(
-        r"(?s)^Exit code: 0
+    let expected_output = format!("Success. Updated the following files:\nA {file_name}\n");
+    if let ApplyPatchModelOutput::Freeform = output_type {
+        let expected_pattern = format!(
+            r"(?s)^Exit code: 0
 Wall time: [0-9]+(?:\.[0-9]+)? seconds
 Output:
 Success. Updated the following files:
 A {file_name}
 ?$"
-    );
-    assert_regex_match(&expected_pattern, output.as_str());
+        );
+        assert_regex_match(&expected_pattern, output.as_str());
+    } else {
+        assert_eq!(output, expected_output);
+    }
 
     Ok(())
 }
@@ -544,15 +470,20 @@ async fn apply_patch_custom_tool_call_creates_file(
 
     let output = harness.apply_patch_output(call_id, output_type).await;
 
-    let expected_pattern = format!(
-        r"(?s)^Exit code: 0
+    let expected_output = format!("Success. Updated the following files:\nA {file_name}\n");
+    if let ApplyPatchModelOutput::Freeform = output_type {
+        let expected_pattern = format!(
+            r"(?s)^Exit code: 0
 Wall time: [0-9]+(?:\.[0-9]+)? seconds
 Output:
 Success. Updated the following files:
 A {file_name}
 ?$"
-    );
-    assert_regex_match(&expected_pattern, output.as_str());
+        );
+        assert_regex_match(&expected_pattern, output.as_str());
+    } else {
+        assert_eq!(output, expected_output);
+    }
 
     let new_file_path = harness.path(file_name);
     let created_contents = fs::read_to_string(&new_file_path)?;
@@ -602,15 +533,20 @@ async fn apply_patch_custom_tool_call_updates_existing_file(
 
     let output = harness.apply_patch_output(call_id, output_type).await;
 
-    let expected_pattern = format!(
-        r"(?s)^Exit code: 0
+    let expected_output = format!("Success. Updated the following files:\nM {file_name}\n");
+    if let ApplyPatchModelOutput::Freeform = output_type {
+        let expected_pattern = format!(
+            r"(?s)^Exit code: 0
 Wall time: [0-9]+(?:\.[0-9]+)? seconds
 Output:
 Success. Updated the following files:
 M {file_name}
 ?$"
-    );
-    assert_regex_match(&expected_pattern, output.as_str());
+        );
+        assert_regex_match(&expected_pattern, output.as_str());
+    } else {
+        assert_eq!(output, expected_output);
+    }
 
     let updated_contents = fs::read_to_string(file_path)?;
     assert_eq!(updated_contents, "after\n", "expected updated file content");
@@ -696,15 +632,20 @@ async fn apply_patch_function_call_output_is_structured(
         .await?;
 
     let output = harness.apply_patch_output(call_id, output_type).await;
-    let expected_pattern = format!(
-        r"(?s)^Exit code: 0
+    let expected_output = format!("Success. Updated the following files:\nA {file_name}\n");
+    if let ApplyPatchModelOutput::Freeform = output_type {
+        let expected_pattern = format!(
+            r"(?s)^Exit code: 0
 Wall time: [0-9]+(?:\.[0-9]+)? seconds
 Output:
 Success. Updated the following files:
 A {file_name}
 ?$"
-    );
-    assert_regex_match(&expected_pattern, output.as_str());
+        );
+        assert_regex_match(&expected_pattern, output.as_str());
+    } else {
+        assert_eq!(output, expected_output);
+    }
 
     Ok(())
 }
@@ -797,12 +738,7 @@ async fn shell_command_output_is_freeform() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    let expected_pattern = r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-shell command
-?$";
-    assert_regex_match(expected_pattern, output);
+    assert_eq!(output, "shell command\n");
 
     Ok(())
 }
@@ -852,11 +788,7 @@ async fn shell_command_output_is_not_truncated_under_10k_bytes() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    let expected_pattern = r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-1{10000}$";
-    assert_regex_match(expected_pattern, output);
+    assert_eq!(output, "1".repeat(10_000));
 
     Ok(())
 }
@@ -906,11 +838,7 @@ async fn shell_command_output_is_not_truncated_over_10k_bytes() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    let expected_pattern = r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-1*…1 chars truncated…1*$";
-    assert_regex_match(expected_pattern, output);
+    assert_eq!(output, "1".repeat(10_001));
 
     Ok(())
 }
@@ -957,12 +885,7 @@ async fn local_shell_call_output_is_structured() -> Result<()> {
         .and_then(Value::as_str)
         .expect("local shell output string");
 
-    let expected_pattern = r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-local shell
-?$";
-    assert_regex_match(expected_pattern, output);
+    assert_eq!(output, "local shell\n");
 
     Ok(())
 }

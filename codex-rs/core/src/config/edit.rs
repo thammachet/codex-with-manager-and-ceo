@@ -268,27 +268,36 @@ impl ConfigDocument {
                 manager_reasoning_effort,
                 worker_reasoning_effort,
             } => {
-                if !enabled
-                    && manager_model.is_none()
-                    && worker_model.is_none()
-                    && manager_reasoning_effort.is_none()
-                    && worker_reasoning_effort.is_none()
-                {
+                let manager_config = ManagerConfig {
+                    enabled: *enabled,
+                    manager_model: manager_model.clone(),
+                    worker_model: worker_model.clone(),
+                    manager_reasoning_effort: *manager_reasoning_effort,
+                    worker_reasoning_effort: *worker_reasoning_effort,
+                };
+                if manager_config == ManagerConfig::default() {
                     Ok(self.clear(Scope::Global, &["manager"]))
                 } else {
-                    let mut mutated =
-                        self.write_value(Scope::Global, &["manager", "enabled"], value(*enabled));
-                    mutated |=
-                        self.write_optional_global(&["manager", "manager_model"], manager_model);
-                    mutated |=
-                        self.write_optional_global(&["manager", "worker_model"], worker_model);
+                    let mut mutated = self.write_value(
+                        Scope::Global,
+                        &["manager", "enabled"],
+                        value(manager_config.enabled),
+                    );
+                    mutated |= self.write_optional_global(
+                        &["manager", "manager_model"],
+                        &manager_config.manager_model,
+                    );
+                    mutated |= self.write_optional_global(
+                        &["manager", "worker_model"],
+                        &manager_config.worker_model,
+                    );
                     mutated |= self.write_reasoning_value(
                         &["manager", "manager_reasoning_effort"],
-                        *manager_reasoning_effort,
+                        manager_config.manager_reasoning_effort,
                     );
                     mutated |= self.write_reasoning_value(
                         &["manager", "worker_reasoning_effort"],
-                        *worker_reasoning_effort,
+                        manager_config.worker_reasoning_effort,
                     );
                     Ok(mutated)
                 }
@@ -298,15 +307,24 @@ impl ConfigDocument {
                 ceo_model,
                 ceo_reasoning_effort,
             } => {
-                if !enabled && ceo_model.is_none() && ceo_reasoning_effort.is_none() {
+                let ceo_config = CeoConfig {
+                    enabled: *enabled,
+                    ceo_model: ceo_model.clone(),
+                    ceo_reasoning_effort: *ceo_reasoning_effort,
+                };
+                if ceo_config == CeoConfig::default() {
                     Ok(self.clear(Scope::Global, &["ceo"]))
                 } else {
-                    let mut mutated =
-                        self.write_value(Scope::Global, &["ceo", "enabled"], value(*enabled));
-                    mutated |= self.write_optional_global(&["ceo", "ceo_model"], ceo_model);
+                    let mut mutated = self.write_value(
+                        Scope::Global,
+                        &["ceo", "enabled"],
+                        value(ceo_config.enabled),
+                    );
+                    mutated |=
+                        self.write_optional_global(&["ceo", "ceo_model"], &ceo_config.ceo_model);
                     mutated |= self.write_reasoning_value(
                         &["ceo", "ceo_reasoning_effort"],
-                        *ceo_reasoning_effort,
+                        ceo_config.ceo_reasoning_effort,
                     );
                     Ok(mutated)
                 }

@@ -69,20 +69,20 @@ model = "gpt-5.1"  # overrides the default ("gpt-5.1-codex-max" across platforms
 
 ### manager
 
-Codex can route each prompt through a planning manager that coordinates one or more worker agents. Each worker runs a full Codex session and is able to execute tools and edit files, while the manager focuses on breaking the task down, issuing `delegate_worker` calls, and summarizing results back to you. By default the manager layer is disabled; enable it in `config.toml` or via CLI flags when you want the higher-level orchestration.
+Codex routes each prompt through a planning manager that coordinates one or more worker agents by default. Each worker runs a full Codex session and is able to execute tools and edit files, while the manager focuses on breaking the task down, issuing `delegate_worker` calls, and summarizing results back to you. Disable the manager in `config.toml` or via CLI flags when you want to talk directly to the worker.
 
 ```toml
 [manager]
-enabled = true
+# enabled = true           # default; set to false to talk directly to the worker
 manager_model = "gpt-5.1"      # optional; defaults to whatever `model` is set to
 worker_model = "gpt-5-codex"   # optional; workers fall back to the manager model when omitted
 manager_reasoning_effort = "high"    # optional; inherits the session's reasoning when omitted
 worker_reasoning_effort = "medium"   # optional; workers fall back to the manager reasoning when omitted
 ```
 
-- Use `codex --manager` (or `codex exec --manager`) to turn the layer on for a session, `--no-manager` to force direct worker control, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files.
+- Use `codex --no-manager` (or `codex exec --no-manager`) to bypass the manager for a session, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files. If you disable the manager in config, `--manager` re-enables it temporarily.
 - Use `--manager-reasoning <none|minimal|low|medium|high>` and `--worker-reasoning <…>` to pin reasoning effort for each layer without editing config files. Omit the flags (or remove the TOML keys) to inherit the session’s reasoning defaults.
-- When the manager layer is active, your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
+- When the manager layer is active (the default), your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
 - Worker-specific instructions should either go into the optional `persona` field on `delegate_worker` (for persistent tone/role changes) or the objective/context (for per-task nuances). The manager prompt already forbids direct tool usage and summarizes worker output for you.
 - Managers automatically see a condensed list of configured MCP servers + tools so they know what capabilities their workers can call.
 - The interactive UI surfaces a live "Worker status" hint (e.g., `Running cargo test · worker-3`) whenever the manager is waiting on a worker, so you can confirm progress without scrolling through extra log lines. When the CEO layer is enabled, this view now shows the full CEO → manager → worker hierarchy and retains each agent’s last reported status even after it finishes so you can see the entire delegation path.
@@ -93,16 +93,16 @@ Every worker response now includes `Worker ID: worker-#`. Supply that ID plus `a
 
 ### ceo
 
-For even higher-level coordination, Codex can add a CEO layer above the manager. The CEO never calls tools directly; it only delegates to managers via `delegate_manager`, pushes them to produce PRE_IMPLEMENTATION_PLAN / VALIDATION / PROGRESS_REPORT deliverables, and synthesizes the final answer once managers have finished.
+For even higher-level coordination, Codex includes a CEO layer above the manager by default. The CEO never calls tools directly; it only delegates to managers via `delegate_manager`, pushes them to produce PRE_IMPLEMENTATION_PLAN / VALIDATION / PROGRESS_REPORT deliverables, and synthesizes the final answer once managers have finished.
 
 ```toml
 [ceo]
-enabled = true
+enabled = true  # default; set to false when you want to skip the CEO layer
 ceo_model = "gpt-5.1"
 ceo_reasoning_effort = "high"
 ```
 
-- Use `codex --ceo` / `codex exec --ceo` to enable the layer for a session, `--no-ceo` to disable it, and `--ceo-model <slug>` / `--ceo-reasoning <…>` to override its model or reasoning effort without editing config.
+- Use `codex --no-ceo` / `codex exec --no-ceo` to disable the layer for a session, `--ceo` to re-enable it when config turns it off, and `--ceo-model <slug>` / `--ceo-reasoning <…>` to override its model or reasoning effort without editing config.
 - CEOs rely on your manager/worker settings for the layers beneath them, so you can mix models (for example: CEO on a reasoning-heavy model, managers on a fast planning model, workers on the default coding model).
 - Every delegated manager returns a `Manager ID`. Resume it with `action = "message"`, poll its progress with `action = "status"`, and release it with `action = "close"` just like workers.
 

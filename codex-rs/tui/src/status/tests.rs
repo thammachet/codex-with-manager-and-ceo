@@ -21,12 +21,15 @@ use std::path::PathBuf;
 use tempfile::TempDir;
 
 fn test_config(temp_home: &TempDir) -> Config {
-    Config::load_from_base_config_with_overrides(
+    let mut config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
         ConfigOverrides::default(),
         temp_home.path().to_path_buf(),
     )
-    .expect("load config")
+    .expect("load config");
+    config.manager.enabled = false;
+    config.ceo.enabled = false;
+    config
 }
 
 fn test_auth_manager(config: &Config) -> AuthManager {

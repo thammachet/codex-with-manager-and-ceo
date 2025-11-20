@@ -690,11 +690,11 @@ pub struct ConfigToml {
     /// Nested tools section for feature toggles
     pub tools: Option<ToolsToml>,
 
-    /// Manager/worker orchestration settings; when omitted the feature is disabled.
+    /// Manager/worker orchestration settings; defaults to enabled when omitted.
     #[serde(default)]
     pub manager: Option<ManagerConfigToml>,
 
-    /// CEO/manager orchestration settings.
+    /// CEO/manager orchestration settings; defaults to enabled when omitted.
     #[serde(default)]
     pub ceo: Option<CeoConfigToml>,
 
@@ -922,7 +922,7 @@ pub struct ConfigOverrides {
     pub ceo_reasoning_effort: Option<ReasoningEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ManagerConfig {
     pub enabled: bool,
     pub manager_model: Option<String>,
@@ -931,17 +931,28 @@ pub struct ManagerConfig {
     pub worker_reasoning_effort: Option<ReasoningEffort>,
 }
 
+impl Default for ManagerConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            manager_model: None,
+            worker_model: None,
+            manager_reasoning_effort: None,
+            worker_reasoning_effort: None,
+        }
+    }
+}
+
+type ManagerOverrides = (
+    Option<bool>,
+    Option<String>,
+    Option<String>,
+    Option<ReasoningEffort>,
+    Option<ReasoningEffort>,
+);
+
 impl ManagerConfig {
-    fn resolve(
-        toml: Option<&ManagerConfigToml>,
-        overrides: (
-            Option<bool>,
-            Option<String>,
-            Option<String>,
-            Option<ReasoningEffort>,
-            Option<ReasoningEffort>,
-        ),
-    ) -> Self {
+    fn resolve(toml: Option<&ManagerConfigToml>, overrides: ManagerOverrides) -> Self {
         let (
             override_enabled,
             override_manager_model,
@@ -1000,11 +1011,21 @@ pub struct ManagerConfigToml {
     pub worker_reasoning_effort: Option<ReasoningEffort>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CeoConfig {
     pub enabled: bool,
     pub ceo_model: Option<String>,
     pub ceo_reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl Default for CeoConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            ceo_model: None,
+            ceo_reasoning_effort: None,
+        }
+    }
 }
 
 impl CeoConfig {
@@ -1559,6 +1580,22 @@ mod tests {
 
     use std::time::Duration;
     use tempfile::TempDir;
+
+    #[test]
+    fn manager_and_ceo_enabled_by_default() {
+        let codex_home = TempDir::new().expect("tmpdir");
+        let config = Config::load_from_base_config_with_overrides(
+            ConfigToml::default(),
+            ConfigOverrides::default(),
+            codex_home.path().to_path_buf(),
+        )
+        .expect("load default config");
+
+        assert!(ManagerConfig::default().enabled);
+        assert!(CeoConfig::default().enabled);
+        assert!(config.manager.enabled);
+        assert!(config.ceo.enabled);
+    }
 
     #[test]
     fn test_toml_parsing() {

@@ -44,13 +44,19 @@ pub fn load_default_config_for_test(codex_home: &TempDir) -> Config {
 fn default_test_overrides() -> ConfigOverrides {
     ConfigOverrides {
         codex_linux_sandbox_exe: Some(cargo_bin("codex-linux-sandbox")),
+        manager_enabled: Some(false),
+        ceo_enabled: Some(false),
         ..ConfigOverrides::default()
     }
 }
 
 #[cfg(not(target_os = "linux"))]
 fn default_test_overrides() -> ConfigOverrides {
-    ConfigOverrides::default()
+    ConfigOverrides {
+        manager_enabled: Some(false),
+        ceo_enabled: Some(false),
+        ..ConfigOverrides::default()
+    }
 }
 
 /// Builds an SSE stream body from a JSON fixture.

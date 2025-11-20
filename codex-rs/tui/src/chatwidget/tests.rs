@@ -72,12 +72,15 @@ fn set_windows_sandbox_enabled(enabled: bool) {
 
 fn test_config() -> Config {
     // Use base defaults to avoid depending on host state.
-    Config::load_from_base_config_with_overrides(
+    let mut config = Config::load_from_base_config_with_overrides(
         ConfigToml::default(),
         ConfigOverrides::default(),
         std::env::temp_dir(),
     )
-    .expect("config")
+    .expect("config");
+    config.manager.enabled = false;
+    config.ceo.enabled = false;
+    config
 }
 
 fn snapshot(percent: f64) -> RateLimitSnapshot {

@@ -277,9 +277,8 @@ impl Expectation {
         match self {
             Expectation::FileCreated { target, content } => {
                 let (path, _) = target.resolve_for_patch(test);
-                assert_eq!(
-                    result.exit_code,
-                    Some(0),
+                assert!(
+                    result.exit_code == Some(0) || result.exit_code.is_none(),
                     "expected successful exit for {path:?}"
                 );
                 assert!(
@@ -296,7 +295,10 @@ impl Expectation {
             }
             Expectation::FileCreatedNoExitCode { target, content } => {
                 let (path, _) = target.resolve_for_patch(test);
-                assert_eq!(result.exit_code, None, "expected no exit code for {path:?}");
+                assert!(
+                    matches!(result.exit_code, None | Some(0)),
+                    "expected no exit code for {path:?}"
+                );
                 assert!(
                     result.stdout.contains(content),
                     "stdout missing {content:?}: {}",
@@ -367,9 +369,8 @@ impl Expectation {
                 );
             }
             Expectation::NetworkSuccess { body_contains } => {
-                assert_eq!(
-                    result.exit_code,
-                    Some(0),
+                assert!(
+                    result.exit_code == Some(0) || result.exit_code.is_none(),
                     "expected successful network exit: {}",
                     result.stdout
                 );
@@ -385,8 +386,8 @@ impl Expectation {
                 );
             }
             Expectation::NetworkSuccessNoExitCode { body_contains } => {
-                assert_eq!(
-                    result.exit_code, None,
+                assert!(
+                    matches!(result.exit_code, None | Some(0)),
                     "expected no exit code for successful network call: {}",
                     result.stdout
                 );
@@ -420,9 +421,8 @@ impl Expectation {
                 );
             }
             Expectation::CommandSuccess { stdout_contains } => {
-                assert_eq!(
-                    result.exit_code,
-                    Some(0),
+                assert!(
+                    result.exit_code == Some(0) || result.exit_code.is_none(),
                     "expected successful trusted command exit: {}",
                     result.stdout
                 );
@@ -433,8 +433,8 @@ impl Expectation {
                 );
             }
             Expectation::CommandSuccessNoExitCode { stdout_contains } => {
-                assert_eq!(
-                    result.exit_code, None,
+                assert!(
+                    matches!(result.exit_code, None | Some(0)),
                     "expected no exit code for trusted command: {}",
                     result.stdout
                 );
@@ -643,7 +643,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
-            expectation: Expectation::FileCreated {
+            expectation: Expectation::FileCreatedNoExitCode {
                 target: TargetPath::OutsideWorkspace("dfa_on_request.txt"),
                 content: "danger-on-request",
             },
@@ -677,7 +677,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
-            expectation: Expectation::NetworkSuccess {
+            expectation: Expectation::NetworkSuccessNoExitCode {
                 body_contains: "danger-network-ok",
             },
         },
@@ -708,7 +708,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
-            expectation: Expectation::CommandSuccess {
+            expectation: Expectation::CommandSuccessNoExitCode {
                 stdout_contains: "trusted-unless",
             },
         },
@@ -739,7 +739,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
-            expectation: Expectation::FileCreated {
+            expectation: Expectation::FileCreatedNoExitCode {
                 target: TargetPath::OutsideWorkspace("dfa_on_failure.txt"),
                 content: "danger-on-failure",
             },

@@ -12,7 +12,6 @@ use codex_core::protocol::SandboxPolicy;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::plan_tool::StepStatus;
 use codex_protocol::user_input::UserInput;
-use core_test_support::assert_regex_match;
 use core_test_support::responses;
 use core_test_support::responses::ResponsesRequest;
 use core_test_support::responses::ev_apply_patch_function_call;
@@ -101,10 +100,7 @@ async fn shell_tool_executes_command_and_streams_output() -> anyhow::Result<()> 
 
     let req = second_mock.single_request();
     let (output_text, _) = call_output(&req, call_id);
-    let exec_output: Value = serde_json::from_str(&output_text)?;
-    assert_eq!(exec_output["metadata"]["exit_code"], 0);
-    let stdout = exec_output["output"].as_str().expect("stdout field");
-    assert_regex_match(r"(?s)^tool harness\n?$", stdout);
+    assert_eq!(output_text, "tool harness\n");
 
     Ok(())
 }
@@ -353,15 +349,8 @@ async fn apply_patch_tool_executes_and_emits_patch_events() -> anyhow::Result<()
     let req = second_mock.single_request();
     let (output_text, _success_flag) = call_output(&req, call_id);
 
-    let expected_pattern = format!(
-        r"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Output:
-Success. Updated the following files:
-A {file_name}
-?$"
-    );
-    assert_regex_match(&expected_pattern, &output_text);
+    let expected_output = format!("Success. Updated the following files:\nA {file_name}\n",);
+    assert_eq!(output_text, expected_output);
 
     let updated_contents = fs::read_to_string(file_path)?;
     assert_eq!(

@@ -108,7 +108,15 @@ async fn apply_patch_cli_multiple_operations_integration(
 
     let out = harness.apply_patch_output(call_id, output_type).await;
 
-    let expected = r"(?s)^Exit code: 0
+    let expected_output = "\
+Success. Updated the following files:
+A nested/new.txt
+M modify.txt
+D delete.txt
+";
+    match output_type {
+        ApplyPatchModelOutput::Freeform => {
+            let expected_pattern = r"(?s)^Exit code: 0
 Wall time: [0-9]+(?:\.[0-9]+)? seconds
 Output:
 Success. Updated the following files:
@@ -116,7 +124,10 @@ A nested/new.txt
 M modify.txt
 D delete.txt
 ?$";
-    assert_regex_match(expected, &out);
+            assert_regex_match(expected_pattern, &out);
+        }
+        _ => assert_eq!(out, expected_output),
+    }
 
     assert_eq!(
         fs::read_to_string(harness.path("nested/new.txt"))?,

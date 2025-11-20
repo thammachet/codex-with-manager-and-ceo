@@ -1184,7 +1184,7 @@ impl ChatWidget {
             Entry::Occupied(mut entry) => {
                 let status = entry.get_mut();
                 status.message = truncated;
-                status.worker_model = worker_model.clone();
+                status.worker_model = worker_model;
                 status.status = status_kind;
                 status.updated_at = Instant::now();
                 if let Some(name) = display_name {

@@ -327,11 +327,11 @@ async fn user_shell_command_is_truncated_only_once() -> anyhow::Result<()> {
         .function_call_output_text(call_id)
         .context("function_call_output present for shell call")?;
 
-    let truncation_headers = output.matches("Total output lines:").count();
+    let truncation_markers = output.matches("tokens truncated").count();
 
     assert_eq!(
-        truncation_headers, 1,
-        "shell output should carry only one truncation header: {output}"
+        truncation_markers, 1,
+        "shell output should carry only one truncation marker: {output}"
     );
 
     Ok(())

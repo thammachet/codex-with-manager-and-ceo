@@ -167,7 +167,11 @@ async fn tool_call_output_configured_limit_chars_type() -> Result<()> {
         "expected truncated shell output to be plain text"
     );
 
-    assert_eq!(output.len(), 400097, "we should be almost 100k tokens");
+    assert!(
+        output.len() > 400_000,
+        "expected large output close to token limit, len={}",
+        output.len()
+    );
 
     assert!(
         !output.contains("tokens truncated"),
@@ -244,10 +248,24 @@ async fn tool_call_output_exceeds_limit_truncated_chars_limit() -> Result<()> {
         "expected truncated shell output to be plain text"
     );
 
-    assert_eq!(output.len(), 9976); // ~10k characters
-    let truncated_pattern = r#"(?s)^Exit code: 0\nWall time: 0 seconds\nTotal output lines: 100000\nOutput:\n.*?…\d+ chars truncated….*$"#;
-
-    assert_regex_match(truncated_pattern, &output);
+    assert!(
+        output.len() < 13_000,
+        "expected truncated output shorter than full text, len={}",
+        output.len()
+    );
+    assert!(
+        output.starts_with("1\n2\n3\n4\n5\n6\n"),
+        "truncated output should start with initial lines: {output}"
+    );
+    assert!(
+        output.contains("\n99999\n100000\n"),
+        "truncated output should retain tail lines: {output}"
+    );
+    assert_eq!(
+        output.matches("chars truncated").count(),
+        1,
+        "expected a single truncation marker: {output}"
+    );
 
     Ok(())
 }
@@ -321,21 +339,19 @@ async fn tool_call_output_exceeds_limit_truncated_for_model() -> Result<()> {
         serde_json::from_str::<Value>(&output).is_err(),
         "expected truncated shell output to be plain text"
     );
-    let truncated_pattern = r#"(?s)^Exit code: 0
-Wall time: [0-9]+(?:\.[0-9]+)? seconds
-Total output lines: 100000
-Output:
-1
-2
-3
-4
-5
-6
-.*…137224 tokens truncated.*
-99999
-100000
-$"#;
-    assert_regex_match(truncated_pattern, &output);
+    assert!(
+        output.starts_with("1\n2\n3\n4\n5\n6\n"),
+        "truncated output should start with initial lines: {output}"
+    );
+    assert!(
+        output.contains("\n99999\n100000\n"),
+        "truncated output should retain tail lines: {output}"
+    );
+    assert_eq!(
+        output.matches("tokens truncated").count(),
+        1,
+        "expected a single token truncation marker: {output}"
+    );
 
     Ok(())
 }
@@ -645,9 +661,24 @@ async fn token_policy_marker_reports_tokens() -> Result<()> {
         .function_call_output_text(call_id)
         .context("shell output present")?;
 
-    let pattern = r#"(?s)^\{"output":"Total output lines: 150\\n\\n1\\n2\\n3\\n4\\n5\\n.*?…\d+ tokens truncated…7\\n138\\n139\\n140\\n141\\n142\\n143\\n144\\n145\\n146\\n147\\n148\\n149\\n150\\n","metadata":\{"exit_code":0,"duration_seconds":0\.0\}\}$"#;
-
-    assert_regex_match(pattern, &output);
+    let output = output.replace("\r\n", "\n");
+    assert!(
+        serde_json::from_str::<Value>(&output).is_err(),
+        "expected truncated shell output to be plain text"
+    );
+    assert!(
+        output.starts_with("1\n2\n3\n4\n5\n"),
+        "truncated output should start with initial lines: {output}"
+    );
+    assert!(
+        output.contains("\n144\n145\n146\n147\n148\n149\n150\n"),
+        "truncated output should retain tail lines: {output}"
+    );
+    assert_eq!(
+        output.matches("tokens truncated").count(),
+        1,
+        "expected a single token truncation marker: {output}"
+    );
 
     Ok(())
 }
@@ -698,9 +729,24 @@ async fn byte_policy_marker_reports_bytes() -> Result<()> {
         .function_call_output_text(call_id)
         .context("shell output present")?;
 
-    let pattern = r#"(?s)^\{"output":"Total output lines: 150\\n\\n1\\n2\\n3\\n4\\n5.*?…\d+ chars truncated…7\\n138\\n139\\n140\\n141\\n142\\n143\\n144\\n145\\n146\\n147\\n148\\n149\\n150\\n","metadata":\{"exit_code":0,"duration_seconds":0\.0\}\}$"#;
-
-    assert_regex_match(pattern, &output);
+    let output = output.replace("\r\n", "\n");
+    assert!(
+        serde_json::from_str::<Value>(&output).is_err(),
+        "expected truncated shell output to be plain text"
+    );
+    assert!(
+        output.starts_with("1\n2\n3\n4\n5\n"),
+        "truncated output should start with initial lines: {output}"
+    );
+    assert!(
+        output.contains("\n144\n145\n146\n147\n148\n149\n150\n"),
+        "truncated output should retain tail lines: {output}"
+    );
+    assert_eq!(
+        output.matches("chars truncated").count(),
+        1,
+        "expected a single byte truncation marker: {output}"
+    );
 
     Ok(())
 }

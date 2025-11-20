@@ -1481,12 +1481,15 @@ mod tests {
     use mcp_types::ToolInputSchema;
 
     fn test_config() -> Config {
-        Config::load_from_base_config_with_overrides(
+        let mut config = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
             ConfigOverrides::default(),
             std::env::temp_dir(),
         )
-        .expect("config")
+        .expect("config");
+        config.manager.enabled = false;
+        config.ceo.enabled = false;
+        config
     }
 
     fn render_lines(lines: &[Line<'static>]) -> Vec<String> {

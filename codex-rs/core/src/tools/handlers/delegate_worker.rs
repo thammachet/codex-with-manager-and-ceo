@@ -6,6 +6,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::DelegateAgentKind;
+use codex_protocol::protocol::DelegateWorkerStatusEvent;
 use codex_protocol::protocol::DelegateWorkerStatusKind;
 use codex_protocol::protocol::EventMsg;
 use codex_protocol::protocol::ExecCommandBeginEvent;
@@ -383,16 +384,17 @@ impl WorkerStatusEmitter {
         let trimmed = message.trim().to_string();
         let should_emit = self.should_emit(&trimmed, status);
         if should_emit {
+            let event = DelegateWorkerStatusEvent {
+                worker_id: self.worker_id.clone(),
+                worker_model: self.worker_model.clone(),
+                agent_kind: self.agent_kind,
+                parent_worker_id: None,
+                status,
+                message: trimmed.clone(),
+                display_name: self.display_name.clone(),
+            };
             self.session
-                .notify_worker_status(
-                    self.turn.as_ref(),
-                    self.worker_id.clone(),
-                    self.worker_model.clone(),
-                    self.agent_kind,
-                    status,
-                    self.display_name.clone(),
-                    trimmed.clone(),
-                )
+                .notify_worker_status(self.turn.as_ref(), event)
                 .await;
             self.last_status = Some(status);
             self.last_message = Some(trimmed);

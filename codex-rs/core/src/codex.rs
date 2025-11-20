@@ -86,7 +86,6 @@ use crate::protocol::ApplyPatchApprovalRequestEvent;
 use crate::protocol::AskForApproval;
 use crate::protocol::BackgroundEventEvent;
 use crate::protocol::DelegateWorkerStatusEvent;
-use crate::protocol::DelegateWorkerStatusKind;
 use crate::protocol::DeprecationNoticeEvent;
 use crate::protocol::ErrorEvent;
 use crate::protocol::Event;
@@ -1432,22 +1431,9 @@ impl Session {
     pub(crate) async fn notify_worker_status(
         &self,
         turn_context: &TurnContext,
-        worker_id: impl Into<String>,
-        worker_model: impl Into<String>,
-        agent_kind: DelegateAgentKind,
-        status: DelegateWorkerStatusKind,
-        display_name: Option<String>,
-        message: impl Into<String>,
+        status: DelegateWorkerStatusEvent,
     ) {
-        let event = EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
-            worker_id: worker_id.into(),
-            worker_model: worker_model.into(),
-            agent_kind,
-            parent_worker_id: None,
-            status,
-            message: message.into(),
-            display_name,
-        });
+        let event = EventMsg::DelegateWorkerStatus(status);
         self.send_event(turn_context, event).await;
     }
 
@@ -1934,6 +1920,7 @@ mod handlers {
     pub async fn shutdown(sess: &Arc<Session>, sub_id: String) -> bool {
         sess.abort_all_tasks(TurnAbortReason::Interrupted).await;
         info!("Shutting down Codex instance");
+        sess.shutdown_managed_workers().await;
 
         // Gracefully flush and shutdown rollout recorder on session end so tests
         // that inspect the rollout file do not race with the background writer.
@@ -2745,6 +2732,7 @@ mod tests {
         )
         .expect("load default config");
         config.manager.enabled = true;
+        config.ceo.enabled = false;
 
         assert!(session_base_instructions(&config).is_none());
         let developer = session_developer_instructions(&config).expect("developer instructions");
@@ -2761,6 +2749,7 @@ mod tests {
         )
         .expect("load default config");
         config.manager.enabled = true;
+        config.ceo.enabled = false;
         config.developer_instructions = Some("custom developer".to_string());
         config.base_instructions = Some("custom base".to_string());
 
@@ -2917,12 +2906,14 @@ mod tests {
     pub(crate) fn make_session_and_context() -> (Session, TurnContext) {
         let (tx_event, _rx_event) = async_channel::unbounded();
         let codex_home = tempfile::tempdir().expect("create temp dir");
-        let config = Config::load_from_base_config_with_overrides(
+        let mut config = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
             ConfigOverrides::default(),
             codex_home.path().to_path_buf(),
         )
         .expect("load default test config");
+        config.manager.enabled = false;
+        config.ceo.enabled = false;
         let config = Arc::new(config);
         let conversation_id = ConversationId::default();
         let otel_event_manager = otel_event_manager(conversation_id, config.as_ref());
@@ -2999,12 +2990,14 @@ mod tests {
     ) {
         let (tx_event, rx_event) = async_channel::unbounded();
         let codex_home = tempfile::tempdir().expect("create temp dir");
-        let config = Config::load_from_base_config_with_overrides(
+        let mut config = Config::load_from_base_config_with_overrides(
             ConfigToml::default(),
             ConfigOverrides::default(),
             codex_home.path().to_path_buf(),
         )
         .expect("load default test config");
+        config.manager.enabled = false;
+        config.ceo.enabled = false;
         let config = Arc::new(config);
         let conversation_id = ConversationId::default();
         let otel_event_manager = otel_event_manager(conversation_id, config.as_ref());

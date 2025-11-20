@@ -15,9 +15,9 @@
 
 This repository (`thammachet/codex-with-manager`) tracks [openai/codex](https://github.com/openai/codex) but layers several experimental multi-agent capabilities on top:
 
-- **Manager/worker orchestration** – Opt into a planning manager with `codex --manager`, `codex exec --manager`, or the `[manager]` section in `~/.codex/config.toml`. The manager uses the new `delegate_worker` tool to spin up full Codex workers that can run commands and edit files while it focuses on breaking work into objectives and summarizing results for you. Worker runs emit `Worker ID: worker-#` so you can resume or close them explicitly, and you can now set `blocking=false` plus `action:"await"`/`"status"` to run many workers in parallel (see `docs/getting-started.md#managerworker-orchestration` and `docs/config.md#manager`).
-- **CEO oversight layer** – Add a higher-level CEO with `codex --ceo` or the `[ceo]` section in `~/.codex/config.toml`. The CEO never runs tools; it delegates via `delegate_manager`, pushes multiple managers in parallel, and holds them accountable for validation before responding to you. Use `--ceo-model`, `--ceo-reasoning`, and the existing manager flags to assign models and reasoning effort per layer.
-- **Layer-specific model + reasoning controls** – Both the manager and the workers can be assigned their own models and reasoning effort via CLI flags (`--manager-model`, `--worker-model`, `--manager-reasoning`, `--worker-reasoning`) or TOML entries. Use `--no-manager` at any time to fall back to the upstream single-agent workflow.
+- **Manager/worker orchestration** – The planning manager runs by default. Disable it with `codex --no-manager`, `codex exec --no-manager`, or `[manager].enabled = false` when you want to talk directly to the worker. The manager uses the new `delegate_worker` tool to spin up full Codex workers that can run commands and edit files while it focuses on breaking work into objectives and summarizing results for you. Worker runs emit `Worker ID: worker-#` so you can resume or close them explicitly, and you can now set `blocking=false` plus `action:"await"`/`"status"` to run many workers in parallel (see `docs/getting-started.md#managerworker-orchestration` and `docs/config.md#manager`).
+- **CEO oversight layer** – A higher-level CEO now sits above the manager by default; switch it off with `codex --no-ceo` or `[ceo].enabled = false` when you want manager-only sessions. The CEO never runs tools; it delegates via `delegate_manager`, pushes multiple managers in parallel, and holds them accountable for validation before responding to you. Use `--ceo-model`, `--ceo-reasoning`, and the existing manager flags to assign models and reasoning effort per layer.
+- **Layer-specific model + reasoning controls** – Both the manager and the workers can be assigned their own models and reasoning effort via CLI flags (`--manager-model`, `--worker-model`, `--manager-reasoning`, `--worker-reasoning`) or TOML entries. Use `--no-manager`/`--no-ceo` to fall back to the upstream single-agent workflow whenever you need to.
 - **UI controls and status signals** – The `/manager` slash command (and the in-TUI manager popup) lets you toggle the layer, switch models, and tune reasoning without leaving the terminal. While the manager waits on a delegate, the status footer now surfaces live updates such as `Running cargo test · worker-3` so you can confirm progress without scrolling.
 - **Local helper script** – Run the Rust workspace build directly via `./c-codex <args>` instead of remembering the `cargo run --bin codex` incantation whenever you need to test fork-specific changes.
 
@@ -60,6 +60,38 @@ Each GitHub Release contains many executables, but in practice, you likely want 
 Each archive contains a single entry with the platform baked into the name (e.g., `codex-x86_64-unknown-linux-musl`), so you likely want to rename it to `codex` after extracting it.
 
 </details>
+
+### Build and install from source
+
+Builds work from canonical or symlinked paths. If you work out of a symlink, set `CARGO_TARGET_DIR` to a stable, realpath-backed directory so Cargo’s cache doesn’t bounce between paths.
+
+```bash
+# Clone and enter the Rust workspace
+git clone https://github.com/openai/codex.git
+cd codex/codex-rs
+
+# Ensure the Rust toolchain is installed
+rustup show >/dev/null 2>&1 || curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+rustup component add rustfmt clippy
+
+# Build everything
+cargo build --workspace --locked
+
+# Building from a symlink? Pin the target dir once:
+#   export CARGO_TARGET_DIR="$(realpath ../codex-target)"  # any stable real path works
+#   cargo build --workspace --locked
+
+# Run the CLI directly
+cargo run --bin codex -- --help
+
+# Install the CLI binary to ~/.cargo/bin
+cargo install --path cli --locked
+
+# If you moved the repo or switched symlink locations, reset the cache:
+cargo clean && cargo build --workspace --locked
+```
+
+More detail lives in [docs/install.md](./docs/install.md).
 
 ### Using Codex with your ChatGPT plan
 
