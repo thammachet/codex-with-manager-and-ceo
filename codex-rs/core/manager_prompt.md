@@ -7,6 +7,7 @@ Delegation rules:
 - REQUIRED_OUTPUT always includes `PRE_IMPLEMENTATION_PLAN` (unless the task is pure analysis), `VALIDATION`, and `PROGRESS_REPORT`. Push workers to provide concrete commands, test names, and risks.
 - Keep objectives focused. Split large areas (multiple files/modules) into smaller workers, then run a synthesis worker if needed.
 - Use the `persona` field when calling `delegate_worker` to set the worker’s role/tone/constraints. Keep objectives/context tight once the persona is set.
+- Use the `web_search` flag when starting a worker to explicitly enable or disable the `web_search` tool for that worker (e.g., allow research on one worker, keep another coding-only).
 - Workers inherit an auto-generated `display_name`; set one manually only when you need to override the synthesized label (keep it short—think “Docs Polish” or “API Tests”).
 - Prefer separate workers for implementation vs. validation when time allows. Use `blocking:false` plus `await`/`status` to run them in parallel. Always `await` or `close` a worker before assigning new work.
 

@@ -13,7 +13,7 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
-use crate::tools::format_exec_output_body;
+use crate::tools::format_exec_output_with_metadata;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -22,6 +22,7 @@ use crate::tools::runtimes::apply_patch::ApplyPatchRuntime;
 use crate::tools::sandboxing::ToolCtx;
 use crate::tools::spec::ApplyPatchToolArgs;
 use crate::tools::spec::JsonSchema;
+use crate::truncate::truncate_text;
 use async_trait::async_trait;
 use serde::Deserialize;
 use serde::Serialize;
@@ -57,16 +58,16 @@ impl ToolHandler for ApplyPatchHandler {
             payload,
         } = invocation;
 
-        let patch_input = match payload {
+        let (patch_input, payload_outputs_custom) = match payload {
             ToolPayload::Function { arguments } => {
                 let args: ApplyPatchToolArgs = serde_json::from_str(&arguments).map_err(|e| {
                     FunctionCallError::RespondToModel(
                         format!("failed to parse function arguments: {e:?}").into(),
                     )
                 })?;
-                args.input
+                (args.input, false)
             }
-            ToolPayload::Custom { input } => input,
+            ToolPayload::Custom { input } => (input, true),
             _ => {
                 return Err(FunctionCallError::RespondToModel(
                     "apply_patch handler received unsupported payload".into(),
@@ -84,7 +85,11 @@ impl ToolHandler for ApplyPatchHandler {
                     .await
                 {
                     InternalApplyPatchInvocation::Output(item) => {
-                        let content = item?;
+                        let mut content = item?;
+                        if payload_outputs_custom {
+                            content =
+                                format!("Exit code: 0\nWall time: 0 seconds\nOutput:\n{content}");
+                        }
                         Ok(ToolOutput::Function {
                             content,
                             content_items: None,
@@ -130,10 +135,21 @@ impl ToolHandler for ApplyPatchHandler {
                             &call_id,
                             Some(&tracker),
                         );
-                        let history_content = out.as_ref().ok().map(|output| {
-                            format_exec_output_body(output, output.aggregated_output.text.as_str())
-                        });
-                        let content = emitter.finish(event_ctx, out).await?;
+                        let exec_ok = out.as_ref().ok().cloned();
+                        let history_content = out
+                            .as_ref()
+                            .ok()
+                            .and_then(crate::tools::history_content_for_exec_output);
+                        let mut content = emitter.finish(event_ctx, out).await?;
+                        if payload_outputs_custom && let Some(output) = exec_ok {
+                            let formatted = truncate_text(
+                                &output.aggregated_output.text,
+                                turn.truncation_policy,
+                            );
+                            let total_lines = output.aggregated_output.text.lines().count();
+                            content =
+                                format_exec_output_with_metadata(&output, total_lines, formatted);
+                        }
                         Ok(ToolOutput::Function {
                             content,
                             content_items: None,

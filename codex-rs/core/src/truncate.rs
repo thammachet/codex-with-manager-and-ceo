@@ -292,7 +292,7 @@ pub(crate) fn approx_token_count(text: &str) -> usize {
     len.saturating_add(APPROX_BYTES_PER_TOKEN.saturating_sub(1)) / APPROX_BYTES_PER_TOKEN
 }
 
-fn approx_bytes_for_tokens(tokens: usize) -> usize {
+pub(crate) fn approx_bytes_for_tokens(tokens: usize) -> usize {
     tokens.saturating_mul(APPROX_BYTES_PER_TOKEN)
 }
 

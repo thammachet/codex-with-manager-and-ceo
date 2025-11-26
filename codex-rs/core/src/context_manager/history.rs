@@ -198,7 +198,11 @@ impl ContextManager {
                     .history_content
                     .as_deref()
                     .unwrap_or(output.content.as_str());
-                let truncated = truncate_text(source_content, policy_with_serialization_budget);
+                let truncated = if has_truncation_marker(source_content) {
+                    source_content.to_string()
+                } else {
+                    truncate_text(source_content, policy_with_serialization_budget)
+                };
                 let truncated_items = output.content_items.as_ref().map(|items| {
                     truncate_function_output_items_with_policy(
                         items,
@@ -259,6 +263,10 @@ fn estimate_reasoning_length(encoded_len: usize) -> usize {
         .checked_div(4)
         .unwrap_or(0)
         .saturating_sub(650)
+}
+
+fn has_truncation_marker(content: &str) -> bool {
+    content.contains("tokens truncated") || content.contains("chars truncated")
 }
 
 #[cfg(test)]

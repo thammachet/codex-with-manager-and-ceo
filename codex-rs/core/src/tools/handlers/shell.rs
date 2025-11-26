@@ -19,7 +19,6 @@ use crate::tools::context::ToolOutput;
 use crate::tools::context::ToolPayload;
 use crate::tools::events::ToolEmitter;
 use crate::tools::events::ToolEventCtx;
-use crate::tools::format_exec_output_body;
 use crate::tools::orchestrator::ToolOrchestrator;
 use crate::tools::registry::ToolHandler;
 use crate::tools::registry::ToolKind;
@@ -265,9 +264,10 @@ impl ShellHandler {
                         let out = orchestrator
                             .run(&mut runtime, &req, &tool_ctx, &turn, turn.approval_policy)
                             .await;
-                        let history_content = out.as_ref().ok().map(|output| {
-                            format_exec_output_body(output, output.aggregated_output.text.as_str())
-                        });
+                        let history_content = out
+                            .as_ref()
+                            .ok()
+                            .and_then(crate::tools::history_content_for_exec_output);
                         let event_ctx = ToolEventCtx::new(
                             session.as_ref(),
                             turn.as_ref(),
@@ -337,7 +337,7 @@ impl ShellHandler {
         let history_content = out
             .as_ref()
             .ok()
-            .map(|output| format_exec_output_body(output, output.aggregated_output.text.as_str()));
+            .and_then(crate::tools::history_content_for_exec_output);
         let event_ctx = ToolEventCtx::new(session.as_ref(), turn.as_ref(), &call_id, None);
         let content = emitter.finish(event_ctx, out).await?;
         Ok(ToolOutput::Function {

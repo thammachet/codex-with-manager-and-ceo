@@ -30,6 +30,7 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_interactive;
 use crate::codex_delegate::run_codex_conversation_one_shot;
+use crate::features::Feature;
 use crate::function_tool::FunctionCallError;
 use crate::manager_workers::ManagedWorker;
 use crate::manager_workers::WorkerAction;
@@ -72,6 +73,8 @@ struct DelegateAgentArgs {
     persona: Option<String>,
     #[serde(default)]
     display_name: Option<String>,
+    #[serde(default)]
+    web_search: Option<bool>,
     #[serde(default, alias = "manager_model")]
     model: Option<String>,
     #[serde(default, alias = "manager_id")]
@@ -518,6 +521,20 @@ fn parse_args(
             ));
         }
 
+        if kind == DelegateAgentKind::Worker
+            && !matches!(parsed.action, WorkerAction::Start)
+            && parsed.web_search.is_some()
+        {
+            return Err(FunctionCallError::RespondToModel(
+                format!(
+                    "{} web_search override is only supported when starting a new {}",
+                    tool_name_for_kind(kind),
+                    noun_for_kind(kind)
+                )
+                .into(),
+            ));
+        }
+
         if parsed.action == WorkerAction::Start && parsed.worker_id.is_some() {
             return Err(FunctionCallError::RespondToModel(
                 format!(
@@ -731,6 +748,11 @@ async fn start_agent(
 ) -> Result<ToolOutput, FunctionCallError> {
     let mut agent_config = (*turn.client.config()).clone();
     agent_config.ceo.enabled = false;
+    let web_search_override = if kind == DelegateAgentKind::Worker {
+        args.web_search
+    } else {
+        None
+    };
 
     let agent_model = match kind {
         DelegateAgentKind::Worker => {
@@ -768,6 +790,15 @@ async fn start_agent(
             model
         }
     };
+
+    if let Some(web_search_enabled) = web_search_override {
+        if web_search_enabled {
+            agent_config.features.enable(Feature::WebSearchRequest);
+        } else {
+            agent_config.features.disable(Feature::WebSearchRequest);
+        }
+        agent_config.tools_web_search_request = web_search_enabled;
+    }
 
     append_persona_instructions(
         &mut agent_config.developer_instructions,
@@ -1443,6 +1474,26 @@ mod tests {
         assert_eq!(args.action, WorkerAction::Close);
         assert_eq!(args.worker_id.as_deref(), Some("worker-7"));
         assert!(args.objective.is_none());
+    }
+
+    #[test]
+    fn web_search_override_only_allowed_on_start() {
+        let err = parse(
+            r#"{"action":"message","worker_id":"worker-7","objective":"hi","web_search":true}"#,
+        )
+        .unwrap_err();
+        match err {
+            FunctionCallError::RespondToModel(msg) => {
+                assert!(msg.content.contains("web_search override"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn web_search_override_is_preserved_on_start() {
+        let args = parse(r#"{"objective":"research","web_search":false}"#).unwrap();
+        assert_eq!(args.web_search, Some(false));
     }
 
     #[test]

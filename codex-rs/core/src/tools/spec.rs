@@ -258,6 +258,15 @@ fn create_delegate_worker_tool() -> ToolSpec {
         },
     );
     properties.insert(
+        "web_search".to_string(),
+        JsonSchema::Boolean {
+            description: Some(
+                "Optional override to enable or disable the web_search tool for this worker. Defaults to the session setting."
+                    .to_string(),
+            ),
+        },
+    );
+    properties.insert(
         "worker_id".to_string(),
         JsonSchema::String {
             description: Some(

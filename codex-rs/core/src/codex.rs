@@ -312,6 +312,7 @@ pub(crate) struct TurnContext {
     pub(crate) tool_call_gate: Arc<ReadinessFlag>,
     pub(crate) exec_policy: Arc<ExecPolicy>,
     pub(crate) truncation_policy: TruncationPolicy,
+    pub(crate) tool_output_token_limit: Option<usize>,
 }
 
 impl TurnContext {
@@ -595,6 +596,7 @@ impl Session {
             tool_call_gate: Arc::new(ReadinessFlag::new()),
             exec_policy: session_configuration.exec_policy.clone(),
             truncation_policy: TruncationPolicy::new(&per_turn_config),
+            tool_output_token_limit: per_turn_config.tool_output_token_limit,
         }
     }
 
@@ -2120,6 +2122,7 @@ async fn spawn_review_thread(
         tool_call_gate: Arc::new(ReadinessFlag::new()),
         exec_policy: parent_turn_context.exec_policy.clone(),
         truncation_policy: TruncationPolicy::new(&per_turn_config),
+        tool_output_token_limit: per_turn_config.tool_output_token_limit,
     };
 
     // Seed the child task with the review prompt as the initial user message.
@@ -2735,7 +2738,6 @@ mod tests {
     use mcp_types::ContentBlock;
     use mcp_types::TextContent;
     use pretty_assertions::assert_eq;
-    use serde::Deserialize;
     use serde_json::json;
     use std::path::PathBuf;
     use std::sync::Arc;
@@ -3544,22 +3546,10 @@ mod tests {
             _ => panic!("unexpected tool output"),
         };
 
-        #[derive(Deserialize, PartialEq, Eq, Debug)]
-        struct ResponseExecMetadata {
-            exit_code: i32,
-        }
-
-        #[derive(Deserialize)]
-        struct ResponseExecOutput {
-            output: String,
-            metadata: ResponseExecMetadata,
-        }
-
-        let exec_output: ResponseExecOutput =
-            serde_json::from_str(&output).expect("valid exec output json");
-
-        pretty_assertions::assert_eq!(exec_output.metadata, ResponseExecMetadata { exit_code: 0 });
-        assert!(exec_output.output.contains("hi"));
+        assert!(
+            output.contains("hi"),
+            "shell output should include stdout: {output:?}"
+        );
     }
     #[tokio::test]
     async fn unified_exec_rejects_escalated_permissions_when_policy_not_on_request() {
