@@ -84,7 +84,7 @@ struct DelegateAgentArgs {
 
 const WORKER_STATUS_MIN_INTERVAL: Duration = Duration::from_millis(750);
 
-const AUTO_DISPLAY_NAME_SYSTEM_PROMPT: &str = r#"You label Codex manager/worker delegations. Create short, vivid names that help humans skim a hierarchy. Stay under 48 characters, keep it to six words or fewer, and avoid IDs, emojis, or trailing punctuation. Highlight how this task differs from sibling work rather than restating the full objective. Return only the label—no commentary."#;
+const AUTO_DISPLAY_NAME_SYSTEM_PROMPT: &str = r#"You label Codex manager/worker delegations. Start with the agent's role (e.g., "Frontend Dev", "Backend Dev", "ML Eng") and add up to two more words that capture what success looks like. Keep it to 3 words total, under 48 characters, and avoid IDs, emojis, or trailing punctuation. Highlight how this task differs from sibling work rather than restating the full objective. Return only the label—no commentary."#;
 const AUTO_DISPLAY_NAME_PROMPT_SECTION_LIMIT: usize = 480;
 const AUTO_DISPLAY_NAME_EXISTING_LIMIT: usize = 6;
 const AUTO_DISPLAY_NAME_MAX_CHARS: usize = 48;
