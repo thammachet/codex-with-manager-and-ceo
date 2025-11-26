@@ -6,8 +6,9 @@
 </br>If you are looking for the <em>cloud-based agent</em> from OpenAI, <strong>Codex Web</strong>, go to <a href="https://chatgpt.com/codex">chatgpt.com/codex</a></p>
 
 <p align="center">
-  <img src="./.github/codex-cli-splash.png" alt="Codex CLI splash" width="80%" />
-  </p>
+<img width="1268" height="684" alt="Screenshot 2025-11-21 011504" src="https://github.com/user-attachments/assets/c9676cb8-3316-4ecc-bc5b-b8d9f6e106b5" />
+
+</p>
 
 ---
 
