@@ -1192,7 +1192,7 @@ async fn run_worker_turn(
                         )
                         .await;
                 }
-                EventMsg::StreamError(StreamErrorEvent { message }) => {
+                EventMsg::StreamError(StreamErrorEvent { message, .. }) => {
                     status_emitter
                         .emit(DelegateWorkerStatusKind::Warning, message)
                         .await;

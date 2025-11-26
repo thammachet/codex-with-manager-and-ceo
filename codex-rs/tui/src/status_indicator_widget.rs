@@ -221,10 +221,7 @@ impl Renderable for StatusIndicatorWidget {
 
         let mut lines: Vec<Line> = Vec::with_capacity(1 + self.agent_rows.len());
         let mut top_spans = Vec::with_capacity(7);
-        top_spans.push(spinner(
-            Some(self.last_resume_at),
-            self.animations_enabled,
-        ));
+        top_spans.push(spinner(Some(self.last_resume_at), self.animations_enabled));
         top_spans.push(" ".into());
         top_spans.push(self.top_role.label().bold());
         top_spans.push(" ".dim());

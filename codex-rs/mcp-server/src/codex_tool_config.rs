@@ -371,7 +371,8 @@ mod tests {
                   "minimal",
                   "low",
                   "medium",
-                  "high"
+                  "high",
+                  "xhigh"
                 ],
                 "type": "string"
               },
@@ -390,7 +391,8 @@ mod tests {
                   "minimal",
                   "low",
                   "medium",
-                  "high"
+                  "high",
+                  "xhigh"
                 ],
                 "type": "string"
               },
@@ -405,7 +407,8 @@ mod tests {
                   "minimal",
                   "low",
                   "medium",
-                  "high"
+                  "high",
+                  "xhigh"
                 ],
                 "type": "string"
               },
