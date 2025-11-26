@@ -163,7 +163,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
     fn process_event(&mut self, event: Event) -> CodexStatus {
         let Event { id: _, msg } = event;
         match msg {
-            EventMsg::Error(ErrorEvent { message }) => {
+            EventMsg::Error(ErrorEvent { message, .. }) => {
                 let prefix = "ERROR:".style(self.red);
                 ts_msg!(self, "{prefix} {message}");
             }
@@ -240,11 +240,24 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     message
                 );
             }
-            EventMsg::StreamError(StreamErrorEvent { message }) => {
+            EventMsg::StreamError(StreamErrorEvent { message, .. }) => {
                 ts_msg!(self, "{}", message.style(self.dimmed));
             }
             EventMsg::TaskStarted(_) => {
                 // Ignore.
+            }
+            EventMsg::ElicitationRequest(ev) => {
+                ts_msg!(
+                    self,
+                    "{} {}",
+                    "elicitation request".style(self.magenta),
+                    ev.server_name.style(self.dimmed)
+                );
+                ts_msg!(
+                    self,
+                    "{}",
+                    "auto-cancelling (not supported in exec mode)".style(self.dimmed)
+                );
             }
             EventMsg::TaskComplete(TaskCompleteEvent { last_agent_message }) => {
                 let last_message = last_agent_message.as_deref();
@@ -365,6 +378,7 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                 call_id,
                 auto_approved,
                 changes,
+                ..
             }) => {
                 // Store metadata so we can calculate duration later when we
                 // receive the corresponding PatchApplyEnd event.
@@ -564,6 +578,9 @@ impl EventProcessor for EventProcessorWithHumanOutput {
                     ts_msg!(self, "task aborted: review ended");
                 }
             },
+            EventMsg::ContextCompacted(_) => {
+                ts_msg!(self, "context compacted");
+            }
             EventMsg::ShutdownComplete => return CodexStatus::Shutdown,
             EventMsg::WebSearchBegin(_)
             | EventMsg::ExecApprovalRequest(_)

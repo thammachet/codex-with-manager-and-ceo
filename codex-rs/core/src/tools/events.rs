@@ -67,12 +67,14 @@ pub(crate) async fn emit_exec_command_begin(
     parsed_cmd: &[ParsedCommand],
     source: ExecCommandSource,
     interaction_input: Option<String>,
+    process_id: Option<&str>,
 ) {
     ctx.session
         .send_event(
             ctx.turn,
             EventMsg::ExecCommandBegin(ExecCommandBeginEvent {
                 call_id: ctx.call_id.to_string(),
+                process_id: process_id.map(str::to_owned),
                 turn_id: ctx.turn.sub_id.clone(),
                 command: command.to_vec(),
                 cwd: cwd.to_path_buf(),
@@ -102,6 +104,7 @@ pub(crate) enum ToolEmitter {
         source: ExecCommandSource,
         interaction_input: Option<String>,
         parsed_cmd: Vec<ParsedCommand>,
+        process_id: Option<String>,
     },
 }
 
@@ -134,6 +137,7 @@ impl ToolEmitter {
         cwd: PathBuf,
         source: ExecCommandSource,
         interaction_input: Option<String>,
+        process_id: Option<String>,
     ) -> Self {
         let parsed_cmd = parse_command(command);
         Self::UnifiedExec {
@@ -142,6 +146,7 @@ impl ToolEmitter {
             source,
             interaction_input,
             parsed_cmd,
+            process_id,
         }
     }
 
@@ -159,7 +164,7 @@ impl ToolEmitter {
             ) => {
                 emit_exec_stage(
                     ctx,
-                    ExecCommandInput::new(command, cwd.as_path(), parsed_cmd, *source, None),
+                    ExecCommandInput::new(command, cwd.as_path(), parsed_cmd, *source, None, None),
                     stage,
                 )
                 .await;
@@ -181,15 +186,17 @@ impl ToolEmitter {
                         ctx.turn,
                         EventMsg::PatchApplyBegin(PatchApplyBeginEvent {
                             call_id: ctx.call_id.to_string(),
+                            turn_id: ctx.turn.sub_id.clone(),
                             auto_approved: *auto_approved,
                             changes: changes.clone(),
                         }),
                     )
                     .await;
             }
-            (Self::ApplyPatch { .. }, ToolEventStage::Success(output)) => {
+            (Self::ApplyPatch { changes, .. }, ToolEventStage::Success(output)) => {
                 emit_patch_end(
                     ctx,
+                    changes.clone(),
                     output.stdout.text.clone(),
                     output.stderr.text.clone(),
                     output.exit_code == 0,
@@ -197,11 +204,12 @@ impl ToolEmitter {
                 .await;
             }
             (
-                Self::ApplyPatch { .. },
+                Self::ApplyPatch { changes, .. },
                 ToolEventStage::Failure(ToolEventFailure::Output(output)),
             ) => {
                 emit_patch_end(
                     ctx,
+                    changes.clone(),
                     output.stdout.text.clone(),
                     output.stderr.text.clone(),
                     output.exit_code == 0,
@@ -209,10 +217,17 @@ impl ToolEmitter {
                 .await;
             }
             (
-                Self::ApplyPatch { .. },
+                Self::ApplyPatch { changes, .. },
                 ToolEventStage::Failure(ToolEventFailure::Message(message)),
             ) => {
-                emit_patch_end(ctx, String::new(), (*message).to_string(), false).await;
+                emit_patch_end(
+                    ctx,
+                    changes.clone(),
+                    String::new(),
+                    (*message).to_string(),
+                    false,
+                )
+                .await;
             }
             (
                 Self::UnifiedExec {
@@ -221,6 +236,7 @@ impl ToolEmitter {
                     source,
                     interaction_input,
                     parsed_cmd,
+                    process_id,
                 },
                 stage,
             ) => {
@@ -232,6 +248,7 @@ impl ToolEmitter {
                         parsed_cmd,
                         *source,
                         interaction_input.as_deref(),
+                        process_id.as_deref(),
                     ),
                     stage,
                 )
@@ -326,6 +343,7 @@ struct ExecCommandInput<'a> {
     parsed_cmd: &'a [ParsedCommand],
     source: ExecCommandSource,
     interaction_input: Option<&'a str>,
+    process_id: Option<&'a str>,
 }
 
 impl<'a> ExecCommandInput<'a> {
@@ -335,6 +353,7 @@ impl<'a> ExecCommandInput<'a> {
         parsed_cmd: &'a [ParsedCommand],
         source: ExecCommandSource,
         interaction_input: Option<&'a str>,
+        process_id: Option<&'a str>,
     ) -> Self {
         Self {
             command,
@@ -342,6 +361,7 @@ impl<'a> ExecCommandInput<'a> {
             parsed_cmd,
             source,
             interaction_input,
+            process_id,
         }
     }
 }
@@ -369,6 +389,7 @@ async fn emit_exec_stage(
                 exec_input.parsed_cmd,
                 exec_input.source,
                 exec_input.interaction_input.map(str::to_owned),
+                exec_input.process_id,
             )
             .await;
         }
@@ -409,6 +430,7 @@ async fn emit_exec_end(
             ctx.turn,
             EventMsg::ExecCommandEnd(ExecCommandEndEvent {
                 call_id: ctx.call_id.to_string(),
+                process_id: exec_input.process_id.map(str::to_owned),
                 turn_id: ctx.turn.sub_id.clone(),
                 command: exec_input.command.to_vec(),
                 cwd: exec_input.cwd.to_path_buf(),
@@ -426,15 +448,23 @@ async fn emit_exec_end(
         .await;
 }
 
-async fn emit_patch_end(ctx: ToolEventCtx<'_>, stdout: String, stderr: String, success: bool) {
+async fn emit_patch_end(
+    ctx: ToolEventCtx<'_>,
+    changes: HashMap<PathBuf, FileChange>,
+    stdout: String,
+    stderr: String,
+    success: bool,
+) {
     ctx.session
         .send_event(
             ctx.turn,
             EventMsg::PatchApplyEnd(PatchApplyEndEvent {
                 call_id: ctx.call_id.to_string(),
+                turn_id: ctx.turn.sub_id.clone(),
                 stdout,
                 stderr,
                 success,
+                changes,
             }),
         )
         .await;

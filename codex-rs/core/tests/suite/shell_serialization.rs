@@ -2,6 +2,7 @@
 #![allow(clippy::expect_used)]
 
 use anyhow::Result;
+use codex_core::config::Config;
 use codex_core::features::Feature;
 use codex_core::model_family::find_family_for_model;
 use codex_core::protocol::SandboxPolicy;
@@ -38,6 +39,20 @@ const FIXTURE_JSON: &str = r#"{
     }
 }
 "#;
+
+fn configure_shell_command_model(output_type: ShellModelOutput, config: &mut Config) {
+    if !matches!(output_type, ShellModelOutput::ShellCommand) {
+        return;
+    }
+
+    if let Some(shell_command_family) = find_family_for_model("test-gpt-5-codex") {
+        if config.model_family.shell_type == shell_command_family.shell_type {
+            return;
+        }
+        config.model = shell_command_family.slug.clone();
+        config.model_family = shell_command_family;
+    }
+}
 
 fn shell_responses(
     call_id: &str,
@@ -107,14 +122,9 @@ async fn shell_output_stays_json_without_freeform_apply_patch(
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(move |config| {
+    let mut builder = test_codex().with_model("gpt-5").with_config(move |config| {
         config.features.disable(Feature::ApplyPatchFreeform);
-        config.model = "gpt-5".to_string();
-        config.model_family = find_family_for_model("gpt-5").expect("gpt-5 is a model family");
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
+        configure_shell_command_model(output_type, config);
     });
     let test = builder.build(&server).await?;
 
@@ -152,10 +162,7 @@ async fn shell_output_is_structured_with_freeform_apply_patch(
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(move |config| {
         config.features.enable(Feature::ApplyPatchFreeform);
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
+        configure_shell_command_model(output_type, config);
     });
     let test = builder.build(&server).await?;
 
@@ -192,14 +199,9 @@ async fn shell_output_preserves_fixture_json_without_serialization(
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(move |config| {
+    let mut builder = test_codex().with_model("gpt-5").with_config(move |config| {
         config.features.disable(Feature::ApplyPatchFreeform);
-        config.model = "gpt-5".to_string();
-        config.model_family = find_family_for_model("gpt-5").expect("gpt-5 is a model family");
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
+        configure_shell_command_model(output_type, config);
     });
     let test = builder.build(&server).await?;
 
@@ -245,10 +247,7 @@ async fn shell_output_structures_fixture_with_serialization(
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(move |config| {
         config.features.enable(Feature::ApplyPatchFreeform);
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
+        configure_shell_command_model(output_type, config);
     });
     let test = builder.build(&server).await?;
 
@@ -296,15 +295,12 @@ async fn shell_output_for_freeform_tool_records_duration(
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(move |config| {
         config.include_apply_patch_tool = true;
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
+        configure_shell_command_model(output_type, config);
     });
     let test = builder.build(&server).await?;
 
     let call_id = "shell-structured";
-    let responses = shell_responses(call_id, vec!["/bin/bash", "-c", "sleep 1"], output_type)?;
+    let responses = shell_responses(call_id, vec!["/bin/sh", "-c", "sleep 1"], output_type)?;
     let mock = mount_sse_sequence(&server, responses).await;
 
     test.submit_turn_with_policy(
@@ -337,16 +333,12 @@ async fn shell_output_reserializes_truncated_content(output_type: ShellModelOutp
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(move |config| {
-        config.model = "gpt-5.1-codex".to_string();
-        config.model_family =
-            find_family_for_model("gpt-5.1-codex").expect("gpt-5.1-codex is a model family");
-        config.tool_output_token_limit = Some(200);
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-        let _ = output_type;
-    });
+    let mut builder = test_codex()
+        .with_model("gpt-5.1-codex")
+        .with_config(move |config| {
+            config.tool_output_token_limit = Some(200);
+            configure_shell_command_model(output_type, config);
+        });
     let test = builder.build(&server).await?;
 
     let call_id = "shell-truncated";
@@ -658,15 +650,12 @@ async fn shell_output_is_structured_for_nonzero_exit(output_type: ShellModelOutp
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(move |config| {
-        config.model = "gpt-5.1-codex".to_string();
-        config.model_family =
-            find_family_for_model("gpt-5.1-codex").expect("gpt-5.1-codex is a model family");
-        config.include_apply_patch_tool = true;
-        if matches!(output_type, ShellModelOutput::ShellCommand) {
-            config.features.enable(Feature::ShellCommandTool);
-        }
-    });
+    let mut builder = test_codex()
+        .with_model("gpt-5.1-codex")
+        .with_config(move |config| {
+            config.include_apply_patch_tool = true;
+            configure_shell_command_model(output_type, config);
+        });
     let test = builder.build(&server).await?;
 
     let call_id = "shell-nonzero-exit";
@@ -701,7 +690,7 @@ async fn shell_command_output_is_freeform() -> Result<()> {
 
     let server = start_mock_server().await;
     let mut builder = test_codex().with_config(move |config| {
-        config.features.enable(Feature::ShellCommandTool);
+        configure_shell_command_model(ShellModelOutput::ShellCommand, config);
     });
     let test = builder.build(&server).await?;
 
@@ -748,11 +737,7 @@ async fn shell_command_output_is_not_truncated_under_10k_bytes() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex()
-        .with_model("gpt-5.1")
-        .with_config(move |config| {
-            config.features.enable(Feature::ShellCommandTool);
-        });
+    let mut builder = test_codex().with_model("gpt-5.1");
     let test = builder.build(&server).await?;
 
     let call_id = "shell-command";
@@ -798,11 +783,7 @@ async fn shell_command_output_is_not_truncated_over_10k_bytes() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex()
-        .with_model("gpt-5.1")
-        .with_config(move |config| {
-            config.features.enable(Feature::ShellCommandTool);
-        });
+    let mut builder = test_codex().with_model("gpt-5.1");
     let test = builder.build(&server).await?;
 
     let call_id = "shell-command";
@@ -848,12 +829,11 @@ async fn local_shell_call_output_is_structured() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
-    let mut builder = test_codex().with_config(|config| {
-        config.model = "gpt-5.1-codex".to_string();
-        config.model_family =
-            find_family_for_model("gpt-5.1-codex").expect("gpt-5.1-codex is a model family");
-        config.include_apply_patch_tool = true;
-    });
+    let mut builder = test_codex()
+        .with_model("gpt-5.1-codex")
+        .with_config(|config| {
+            config.include_apply_patch_tool = true;
+        });
     let test = builder.build(&server).await?;
 
     let call_id = "local-shell-call";

@@ -6,7 +6,6 @@ use crate::config::types::Notice;
 use anyhow::Context;
 use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::TrustLevel;
-use codex_utils_tokenizer::warm_model_cache;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::path::PathBuf;
@@ -247,9 +246,6 @@ impl ConfigDocument {
     fn apply(&mut self, edit: &ConfigEdit) -> anyhow::Result<bool> {
         match edit {
             ConfigEdit::SetModel { model, effort } => Ok({
-                if let Some(model) = &model {
-                    warm_model_cache(model)
-                }
                 let mut mutated = false;
                 mutated |= self.write_profile_value(
                     &["model"],
