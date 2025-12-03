@@ -74,12 +74,16 @@ Codex routes each prompt through a planning manager that coordinates one or more
 # enabled = true           # default; set to false to talk directly to the worker
 manager_model = "gpt-5.1"      # optional; defaults to whatever `model` is set to
 worker_model = "gpt-5-codex"   # optional; workers fall back to the manager model when omitted
+worker_model_auto = true       # optional; when true, the manager chooses gpt-5.1 (general) or gpt-5.1-codex (coding) per worker
 manager_reasoning_effort = "high"    # optional; inherits the session's reasoning when omitted
 worker_reasoning_effort = "medium"   # optional; workers fall back to the manager reasoning when omitted
+worker_reasoning_auto = true         # optional; when true, the manager chooses the worker's reasoning effort per task (xhigh only on gpt-5.1-codex-max)
 ```
 
 - Use `codex --no-manager` (or `codex exec --no-manager`) to bypass the manager for a session, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files. If you disable the manager in config, `--manager` re-enables it temporarily.
 - Use `--manager-reasoning <none|minimal|low|medium|high>` and `--worker-reasoning <…>` to pin reasoning effort for each layer without editing config files. Omit the flags (or remove the TOML keys) to inherit the session’s reasoning defaults.
+- Managers always run with their configured model/reasoning from `/manager`, CLI flags, or config—`delegate_manager` cannot override them. Overrides and auto-picks apply only to workers.
+- When `worker_model_auto` or `worker_reasoning_auto` is set (toggle via the `/manager` command in the TUI), the manager must pick the worker’s model and/or reasoning per task. Pick `gpt-5.1` for general analysis or `gpt-5.1-codex` for coding; xhigh reasoning is only available on `gpt-5.1-codex-max`.
 - When the manager layer is active (the default), your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
 - Worker-specific instructions should either go into the optional `persona` field on `delegate_worker` (for persistent tone/role changes) or the objective/context (for per-task nuances). The manager prompt already forbids direct tool usage and summarizes worker output for you.
 - Gate search per worker: include `"web_search": true` (or `false`) in a `delegate_worker` call to force that worker to enable/disable the `web_search` tool regardless of the session’s default `web_search_request` feature flag. Use this to spin up research-only workers alongside code-only ones.

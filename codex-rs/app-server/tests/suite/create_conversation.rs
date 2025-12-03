@@ -136,6 +136,12 @@ base_url = "{server_uri}/v1"
 wire_api = "chat"
 request_max_retries = 0
 stream_max_retries = 0
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
         ),
     )

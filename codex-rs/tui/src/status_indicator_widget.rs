@@ -6,6 +6,7 @@ use std::time::Instant;
 
 use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::Op;
+use codex_core::protocol_config_types::ReasoningEffort;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -51,6 +52,7 @@ pub(crate) struct AgentStatusEntry {
     pub(crate) role: AgentRole,
     pub(crate) worker_id: Option<String>,
     pub(crate) worker_model: Option<String>,
+    pub(crate) reasoning_effort: Option<ReasoningEffort>,
     pub(crate) display_name: Option<String>,
     pub(crate) message: String,
     pub(crate) depth: u16,
@@ -98,6 +100,16 @@ pub fn fmt_elapsed_compact(elapsed_secs: u64) -> String {
     let minutes = (elapsed_secs % 3600) / 60;
     let seconds = elapsed_secs % 60;
     format!("{hours}h {minutes:02}m {seconds:02}s")
+}
+
+fn short_worker_id(worker_id: &str) -> String {
+    if let Some(rest) = worker_id.strip_prefix("worker-") {
+        return format!("wkr{rest}");
+    }
+    if let Some(rest) = worker_id.strip_prefix("manager-") {
+        return format!("mng{rest}");
+    }
+    worker_id.to_string()
 }
 
 impl StatusIndicatorWidget {
@@ -279,15 +291,24 @@ impl Renderable for StatusIndicatorWidget {
             }
             if let Some(worker_id) = &row.worker_id {
                 spans.push(" ".into());
+                let display_id = short_worker_id(worker_id);
                 if row.display_name.is_some() {
-                    spans.push(format!("({worker_id})").dim());
+                    spans.push(format!("({display_id})").dim());
                 } else {
-                    spans.push(worker_id.as_str().dim());
+                    spans.push(display_id.dim());
                 }
             }
             if let Some(worker_model) = &row.worker_model {
+                let reasoning_label = row
+                    .reasoning_effort
+                    .map(|effort| effort.to_string())
+                    .unwrap_or_else(|| "auto".to_string());
+                let detail = format!("({worker_model} · {reasoning_label})");
                 spans.push(" ".into());
-                spans.push(format!("({worker_model})").dim());
+                spans.push(detail.dim());
+            } else if let Some(reasoning) = row.reasoning_effort {
+                spans.push(" ".into());
+                spans.push(format!("({reasoning})").dim());
             }
             spans.push(" ".into());
             spans.push("·".dim());
@@ -345,6 +366,13 @@ mod tests {
         assert_eq!(fmt_elapsed_compact(3600), "1h 00m 00s");
         assert_eq!(fmt_elapsed_compact(3600 + 60 + 1), "1h 01m 01s");
         assert_eq!(fmt_elapsed_compact(25 * 3600 + 2 * 60 + 3), "25h 02m 03s");
+    }
+
+    #[test]
+    fn short_worker_id_compacts_known_prefixes() {
+        assert_eq!(short_worker_id("worker-1"), "wkr1");
+        assert_eq!(short_worker_id("manager-2"), "mng2");
+        assert_eq!(short_worker_id("other"), "other");
     }
 
     #[test]

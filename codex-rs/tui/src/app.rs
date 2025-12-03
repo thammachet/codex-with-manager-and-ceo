@@ -712,8 +712,10 @@ impl App {
                 enabled,
                 manager_model,
                 worker_model,
+                worker_model_auto,
                 manager_reasoning,
                 worker_reasoning,
+                worker_reasoning_auto,
                 persist,
             } => {
                 let mut mutated = false;
@@ -748,10 +750,33 @@ impl App {
                     self.chat_widget.add_info_message(message, None);
                     mutated = true;
                 }
+                if let Some(auto) = worker_model_auto
+                    && self.config.manager.worker_model_auto != auto
+                {
+                    self.config.manager.worker_model_auto = auto;
+                    self.config.manager.worker_model = None;
+                    let message = if auto {
+                        "Worker model set to auto. Manager will choose gpt-5.1 or gpt-5.1-codex per worker. Start a new session (/new) to apply."
+                            .to_string()
+                    } else {
+                        let fallback = self
+                            .config
+                            .manager
+                            .manager_model
+                            .clone()
+                            .unwrap_or_else(|| self.config.model.clone());
+                        format!(
+                            "Worker model auto disabled; workers inherit the manager model ({fallback}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
                 if let Some(worker_model_update) = worker_model
                     && self.config.manager.worker_model != worker_model_update
                 {
                     self.config.manager.worker_model = worker_model_update.clone();
+                    self.config.manager.worker_model_auto = false;
                     let fallback = self
                         .config
                         .manager
@@ -797,6 +822,7 @@ impl App {
                     && self.config.manager.worker_reasoning_effort != reasoning_update
                 {
                     self.config.manager.worker_reasoning_effort = reasoning_update;
+                    self.config.manager.worker_reasoning_auto = false;
                     let fallback_label = self
                         .config
                         .manager
@@ -812,6 +838,29 @@ impl App {
                     } else {
                         format!(
                             "Workers will inherit the manager reasoning ({fallback_label}). Start a new session (/new) to apply."
+                        )
+                    };
+                    self.chat_widget.add_info_message(message, None);
+                    mutated = true;
+                }
+                if let Some(auto) = worker_reasoning_auto
+                    && self.config.manager.worker_reasoning_auto != auto
+                {
+                    self.config.manager.worker_reasoning_auto = auto;
+                    self.config.manager.worker_reasoning_effort = None;
+                    let fallback_label = self
+                        .config
+                        .manager
+                        .manager_reasoning_effort
+                        .or(self.config.model_reasoning_effort)
+                        .map(|eff| eff.to_string())
+                        .unwrap_or_else(|| "auto".to_string());
+                    let message = if auto {
+                        "Worker reasoning set to auto. Manager will choose the reasoning effort per worker. Start a new session (/new) to apply."
+                            .to_string()
+                    } else {
+                        format!(
+                            "Worker reasoning auto disabled; workers inherit the manager reasoning ({fallback_label}). Start a new session (/new) to apply."
                         )
                     };
                     self.chat_widget.add_info_message(message, None);

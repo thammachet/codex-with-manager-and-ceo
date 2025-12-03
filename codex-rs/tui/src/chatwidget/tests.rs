@@ -168,6 +168,7 @@ fn delegate_worker_status_updates_agent_rows() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::RunningCommand,
@@ -206,6 +207,7 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -219,6 +221,7 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-8".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::RunningTool,
@@ -237,6 +240,7 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Completed,
@@ -272,6 +276,7 @@ fn delegate_manager_and_worker_statuses_render_hierarchy() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "manager-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Manager,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -285,6 +290,7 @@ fn delegate_manager_and_worker_statuses_render_hierarchy() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-8".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: Some("manager-7".to_string()),
             status: DelegateWorkerStatusKind::RunningTool,
@@ -322,6 +328,7 @@ fn delegate_worker_status_resets_when_task_restarts() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-1".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -364,6 +371,7 @@ fn worker_name_used_for_display_name_when_present() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-8".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -397,6 +405,7 @@ fn manager_message_mentions_child_when_display_name_provided() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "manager-7".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Manager,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -410,6 +419,7 @@ fn manager_message_mentions_child_when_display_name_provided() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-8".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: Some("manager-7".to_string()),
             status: DelegateWorkerStatusKind::Running,
@@ -447,6 +457,7 @@ fn event_display_name_overrides_message() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "manager-2".to_string(),
             worker_model: "gpt-test".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Manager,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Running,
@@ -481,6 +492,7 @@ fn manager_display_name_hidden_when_child_matches() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "manager-1".to_string(),
             worker_model: "gpt-manager".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Manager,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Starting,
@@ -494,6 +506,7 @@ fn manager_display_name_hidden_when_child_matches() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-9".to_string(),
             worker_model: "gpt-worker".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: Some("manager-1".to_string()),
             status: DelegateWorkerStatusKind::Starting,
@@ -531,6 +544,7 @@ fn worker_display_name_truncates_long_objectives() {
         msg: EventMsg::DelegateWorkerStatus(DelegateWorkerStatusEvent {
             worker_id: "worker-5".to_string(),
             worker_model: "gpt-worker".to_string(),
+            reasoning_effort: None,
             agent_kind: DelegateAgentKind::Worker,
             parent_worker_id: None,
             status: DelegateWorkerStatusKind::Starting,

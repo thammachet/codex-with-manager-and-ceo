@@ -90,5 +90,11 @@ fn config_contents() -> &'static str {
     r#"model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "read-only"
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
 }

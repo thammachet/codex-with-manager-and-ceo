@@ -922,8 +922,10 @@ pub struct ConfigOverrides {
     pub manager_enabled: Option<bool>,
     pub manager_model: Option<String>,
     pub worker_model: Option<String>,
+    pub worker_model_auto: Option<bool>,
     pub manager_reasoning_effort: Option<ReasoningEffort>,
     pub worker_reasoning_effort: Option<ReasoningEffort>,
+    pub worker_reasoning_auto: Option<bool>,
     pub ceo_enabled: Option<bool>,
     pub ceo_model: Option<String>,
     pub ceo_reasoning_effort: Option<ReasoningEffort>,
@@ -934,8 +936,10 @@ pub struct ManagerConfig {
     pub enabled: bool,
     pub manager_model: Option<String>,
     pub worker_model: Option<String>,
+    pub worker_model_auto: bool,
     pub manager_reasoning_effort: Option<ReasoningEffort>,
     pub worker_reasoning_effort: Option<ReasoningEffort>,
+    pub worker_reasoning_auto: bool,
 }
 
 impl Default for ManagerConfig {
@@ -944,8 +948,10 @@ impl Default for ManagerConfig {
             enabled: true,
             manager_model: None,
             worker_model: None,
+            worker_model_auto: false,
             manager_reasoning_effort: None,
             worker_reasoning_effort: None,
+            worker_reasoning_auto: false,
         }
     }
 }
@@ -954,8 +960,10 @@ type ManagerOverrides = (
     Option<bool>,
     Option<String>,
     Option<String>,
+    Option<bool>,
     Option<ReasoningEffort>,
     Option<ReasoningEffort>,
+    Option<bool>,
 );
 
 impl ManagerConfig {
@@ -964,8 +972,10 @@ impl ManagerConfig {
             override_enabled,
             override_manager_model,
             override_worker_model,
+            override_worker_model_auto,
             override_manager_effort,
             override_worker_effort,
+            override_worker_reasoning_auto,
         ) = overrides;
         let mut cfg = ManagerConfig::default();
         if let Some(toml) = toml {
@@ -978,11 +988,17 @@ impl ManagerConfig {
             if let Some(model) = toml.worker_model.clone() {
                 cfg.worker_model = Some(model);
             }
+            if let Some(auto) = toml.worker_model_auto {
+                cfg.worker_model_auto = auto;
+            }
             if let Some(effort) = toml.manager_reasoning_effort {
                 cfg.manager_reasoning_effort = Some(effort);
             }
             if let Some(effort) = toml.worker_reasoning_effort {
                 cfg.worker_reasoning_effort = Some(effort);
+            }
+            if let Some(auto) = toml.worker_reasoning_auto {
+                cfg.worker_reasoning_auto = auto;
             }
         }
         if let Some(enabled) = override_enabled {
@@ -994,11 +1010,17 @@ impl ManagerConfig {
         if let Some(model) = override_worker_model {
             cfg.worker_model = Some(model);
         }
+        if let Some(auto) = override_worker_model_auto {
+            cfg.worker_model_auto = auto;
+        }
         if let Some(effort) = override_manager_effort {
             cfg.manager_reasoning_effort = Some(effort);
         }
         if let Some(effort) = override_worker_effort {
             cfg.worker_reasoning_effort = Some(effort);
+        }
+        if let Some(auto) = override_worker_reasoning_auto {
+            cfg.worker_reasoning_auto = auto;
         }
         cfg
     }
@@ -1013,9 +1035,13 @@ pub struct ManagerConfigToml {
     #[serde(default)]
     pub worker_model: Option<String>,
     #[serde(default)]
+    pub worker_model_auto: Option<bool>,
+    #[serde(default)]
     pub manager_reasoning_effort: Option<ReasoningEffort>,
     #[serde(default)]
     pub worker_reasoning_effort: Option<ReasoningEffort>,
+    #[serde(default)]
+    pub worker_reasoning_auto: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1135,8 +1161,10 @@ impl Config {
             manager_enabled,
             manager_model: manager_model_override,
             worker_model: worker_model_override,
+            worker_model_auto: worker_model_auto_override,
             manager_reasoning_effort: manager_reasoning_override,
             worker_reasoning_effort: worker_reasoning_override,
+            worker_reasoning_auto: worker_reasoning_auto_override,
             ceo_enabled,
             ceo_model: ceo_model_override,
             ceo_reasoning_effort: ceo_reasoning_override,
@@ -1210,8 +1238,10 @@ impl Config {
                 manager_enabled,
                 manager_model_override,
                 worker_model_override,
+                worker_model_auto_override,
                 manager_reasoning_override,
                 worker_reasoning_override,
+                worker_reasoning_auto_override,
             ),
         );
         let ceo = CeoConfig::resolve(

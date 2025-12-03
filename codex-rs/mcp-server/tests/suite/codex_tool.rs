@@ -475,7 +475,8 @@ fn create_config_toml(codex_home: &Path, server_uri: &str) -> std::io::Result<()
             r#"
 model = "mock-model"
 approval_policy = "untrusted"
-sandbox_policy = "workspace-write"
+sandbox_mode = "workspace-write"
+include_apply_patch_tool = true
 
 model_provider = "mock_provider"
 
@@ -485,6 +486,12 @@ base_url = "{server_uri}/v1"
 wire_api = "chat"
 request_max_retries = 0
 stream_max_retries = 0
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
         ),
     )

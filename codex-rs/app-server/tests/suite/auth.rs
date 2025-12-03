@@ -41,6 +41,12 @@ wire_api = "chat"
 request_max_retries = 0
 stream_max_retries = 0
 {requires_line}
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
     );
     std::fs::write(config_toml, contents)
@@ -54,6 +60,12 @@ fn create_config_toml(codex_home: &Path) -> std::io::Result<()> {
 model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#,
     )
 }
@@ -66,6 +78,12 @@ model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 forced_login_method = "{forced_method}"
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
     );
     std::fs::write(config_toml, contents)

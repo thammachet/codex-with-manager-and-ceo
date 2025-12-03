@@ -1825,6 +1825,7 @@ dependencies = [
  "base64",
  "codex-core",
  "codex-protocol",
+ "escargot",
  "notify",
  "regex-lite",
  "serde_json",

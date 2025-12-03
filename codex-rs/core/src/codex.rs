@@ -340,6 +340,9 @@ fn session_developer_instructions(config: &Config) -> Option<String> {
     } else if config.manager.enabled {
         segments.push(MANAGER_PROMPT.trim().to_string());
     }
+    if let Some(hint) = manager_auto_hint(config) {
+        segments.push(hint);
+    }
     if let Some(dev) = config
         .developer_instructions
         .as_deref()
@@ -351,6 +354,34 @@ fn session_developer_instructions(config: &Config) -> Option<String> {
         0 => None,
         1 => Some(segments.remove(0)),
         _ => Some(segments.join("\n\n")),
+    }
+}
+
+fn manager_auto_hint(config: &Config) -> Option<String> {
+    if !config.manager.enabled {
+        return None;
+    }
+
+    let mut hints = Vec::new();
+
+    if config.manager.worker_model_auto {
+        hints.push(
+            "Worker model set to Auto via /manager: choose gpt-5.1 for general tasks or gpt-5.1-codex for coding work (xhigh reasoning only on gpt-5.1-codex-max)."
+                .to_string(),
+        );
+    }
+
+    if config.manager.worker_reasoning_auto {
+        hints.push(
+            "Worker reasoning set to Auto via /manager: pick none/minimal/low/medium/high for gpt-5.1, or up to xhigh on gpt-5.1-codex-max when needed."
+                .to_string(),
+        );
+    }
+
+    if hints.is_empty() {
+        None
+    } else {
+        Some(hints.join("\n"))
     }
 }
 

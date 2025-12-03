@@ -1451,6 +1451,9 @@ pub enum DelegateAgentKind {
 pub struct DelegateWorkerStatusEvent {
     pub worker_id: String,
     pub worker_model: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[ts(optional)]
+    pub reasoning_effort: Option<ReasoningEffortConfig>,
     #[serde(default = "default_delegate_agent_kind")]
     pub agent_kind: DelegateAgentKind,
     #[serde(default, skip_serializing_if = "Option::is_none")]

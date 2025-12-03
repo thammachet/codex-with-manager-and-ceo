@@ -343,6 +343,7 @@ struct ActiveWorkerStatus {
     message: String,
     kind: DelegateAgentKind,
     worker_model: String,
+    reasoning_effort: Option<ReasoningEffortConfig>,
     status: DelegateWorkerStatusKind,
     updated_at: Instant,
     display_name: Option<String>,
@@ -634,6 +635,7 @@ impl ChatWidget {
             role: row_role,
             worker_id: Some(key.worker_id.clone()),
             worker_model: Some(status.worker_model.clone()),
+            reasoning_effort: status.reasoning_effort,
             display_name: if hide_display_name {
                 None
             } else {
@@ -1183,6 +1185,7 @@ impl ChatWidget {
         let DelegateWorkerStatusEvent {
             worker_id,
             worker_model,
+            reasoning_effort,
             agent_kind,
             parent_worker_id,
             status: status_kind,
@@ -1214,6 +1217,7 @@ impl ChatWidget {
                 let status = entry.get_mut();
                 status.message = truncated;
                 status.worker_model = worker_model;
+                status.reasoning_effort = reasoning_effort;
                 status.status = status_kind;
                 status.updated_at = Instant::now();
                 if let Some(name) = display_name {
@@ -1225,6 +1229,7 @@ impl ChatWidget {
                     message: truncated,
                     kind: agent_kind,
                     worker_model,
+                    reasoning_effort,
                     status: status_kind,
                     updated_at: Instant::now(),
                     display_name,
@@ -2540,8 +2545,10 @@ impl ChatWidget {
                 enabled: Some(next_state),
                 manager_model: None,
                 worker_model: None,
+                worker_model_auto: None,
                 manager_reasoning: None,
                 worker_reasoning: None,
+                worker_reasoning_auto: None,
                 persist: true,
             });
         })];
@@ -2621,14 +2628,7 @@ impl ChatWidget {
             ..Default::default()
         });
 
-        let resolved_manager = self.resolved_manager_model();
-        let worker_label = self
-            .config
-            .manager
-            .worker_model
-            .as_deref()
-            .map(std::string::ToString::to_string)
-            .unwrap_or_else(|| format!("inherit manager ({resolved_manager})"));
+        let worker_label = self.worker_model_label();
         let worker_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
             tx.send(AppEvent::OpenManagerModelPopup {
                 target: ManagerModelTarget::Worker,
@@ -2708,11 +2708,15 @@ impl ChatWidget {
             ),
             ManagerModelTarget::Worker => (
                 "Select worker model",
-                self.config
-                    .manager
-                    .worker_model
-                    .clone()
-                    .unwrap_or_else(|| self.resolved_manager_model()),
+                if self.config.manager.worker_model_auto {
+                    String::new()
+                } else {
+                    self.config
+                        .manager
+                        .worker_model
+                        .clone()
+                        .unwrap_or_else(|| self.resolved_manager_model())
+                },
             ),
             ManagerModelTarget::Ceo => (
                 "Select CEO model",
@@ -2740,8 +2744,10 @@ impl ChatWidget {
                             enabled: None,
                             manager_model: Some(None),
                             worker_model: None,
+                            worker_model_auto: None,
                             manager_reasoning: None,
                             worker_reasoning: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     })],
@@ -2750,6 +2756,29 @@ impl ChatWidget {
                 });
             }
             ManagerModelTarget::Worker => {
+                let is_current = self.config.manager.worker_model_auto;
+                items.push(SelectionItem {
+                    name: "Auto-select per worker".into(),
+                    description: Some(
+                        "Manager chooses gpt-5.1 (general) or gpt-5.1-codex (coding) per worker based on the task."
+                            .into(),
+                    ),
+                    is_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: Some(None),
+                            worker_model_auto: Some(true),
+                            manager_reasoning: None,
+                            worker_reasoning: None,
+                            worker_reasoning_auto: None,
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
                 let is_current = self.config.manager.worker_model.is_none();
                 let desc = format!(
                     "Inherit the manager model (currently {}).",
@@ -2758,14 +2787,16 @@ impl ChatWidget {
                 items.push(SelectionItem {
                     name: "Inherit manager model".into(),
                     description: Some(desc),
-                    is_current,
+                    is_current: !self.config.manager.worker_model_auto && is_current,
                     actions: vec![Box::new(|tx| {
                         tx.send(AppEvent::UpdateManagerSettings {
                             enabled: None,
                             manager_model: None,
                             worker_model: Some(None),
+                            worker_model_auto: Some(false),
                             manager_reasoning: None,
                             worker_reasoning: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     })],
@@ -2816,8 +2847,10 @@ impl ChatWidget {
                             enabled: None,
                             manager_model: Some(Some(slug.clone())),
                             worker_model: None,
+                            worker_model_auto: None,
                             manager_reasoning: None,
                             worker_reasoning: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     }
@@ -2826,8 +2859,10 @@ impl ChatWidget {
                             enabled: None,
                             manager_model: None,
                             worker_model: Some(Some(slug.clone())),
+                            worker_model_auto: Some(false),
                             manager_reasoning: None,
                             worker_reasoning: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     }
@@ -2889,6 +2924,8 @@ impl ChatWidget {
                             worker_model: None,
                             manager_reasoning: Some(None),
                             worker_reasoning: None,
+                            worker_model_auto: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     })],
@@ -2897,11 +2934,35 @@ impl ChatWidget {
                 });
             }
             ManagerModelTarget::Worker => {
+                let auto_current = self.config.manager.worker_reasoning_auto;
+                items.push(SelectionItem {
+                    name: "Auto-select per worker".into(),
+                    description: Some(
+                        "Manager will pick a reasoning effort per worker (xhigh only on gpt-5.1-codex-max)."
+                            .into(),
+                    ),
+                    is_current: auto_current,
+                    actions: vec![Box::new(|tx| {
+                        tx.send(AppEvent::UpdateManagerSettings {
+                            enabled: None,
+                            manager_model: None,
+                            worker_model: None,
+                            worker_model_auto: None,
+                            manager_reasoning: None,
+                            worker_reasoning: Some(None),
+                            worker_reasoning_auto: Some(true),
+                            persist: true,
+                        });
+                    })],
+                    dismiss_on_select: true,
+                    ..Default::default()
+                });
                 let fallback = self
                     .resolved_manager_reasoning_effort()
                     .map(|eff| eff.to_string())
                     .unwrap_or_else(|| "auto".to_string());
-                let is_current = self.config.manager.worker_reasoning_effort.is_none();
+                let is_current = self.config.manager.worker_reasoning_effort.is_none()
+                    && !self.config.manager.worker_reasoning_auto;
                 items.push(SelectionItem {
                     name: "Inherit manager reasoning".into(),
                     description: Some(format!(
@@ -2915,6 +2976,8 @@ impl ChatWidget {
                             worker_model: None,
                             manager_reasoning: None,
                             worker_reasoning: Some(None),
+                            worker_model_auto: None,
+                            worker_reasoning_auto: Some(false),
                             persist: true,
                         });
                     })],
@@ -2962,6 +3025,8 @@ impl ChatWidget {
                             worker_model: None,
                             manager_reasoning: Some(Some(effort)),
                             worker_reasoning: None,
+                            worker_model_auto: None,
+                            worker_reasoning_auto: None,
                             persist: true,
                         });
                     }
@@ -2972,6 +3037,8 @@ impl ChatWidget {
                             worker_model: None,
                             manager_reasoning: None,
                             worker_reasoning: Some(Some(effort)),
+                            worker_model_auto: None,
+                            worker_reasoning_auto: Some(false),
                             persist: true,
                         });
                     }
@@ -3229,6 +3296,9 @@ impl ChatWidget {
     }
 
     fn worker_reasoning_label(&self) -> String {
+        if self.config.manager.worker_reasoning_auto {
+            return "auto (manager picks per worker)".to_string();
+        }
         match self.config.manager.worker_reasoning_effort {
             Some(effort) => effort.to_string(),
             None => {
@@ -3239,6 +3309,17 @@ impl ChatWidget {
                 }
             }
         }
+    }
+
+    fn worker_model_label(&self) -> String {
+        if self.config.manager.worker_model_auto {
+            return "auto (manager picks per worker)".to_string();
+        }
+        if let Some(model) = self.config.manager.worker_model.as_deref() {
+            return model.to_string();
+        }
+        let fallback = self.resolved_manager_model();
+        format!("inherit manager ({fallback})")
     }
 
     fn ceo_reasoning_label(&self) -> String {

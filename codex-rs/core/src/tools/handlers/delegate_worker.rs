@@ -4,6 +4,7 @@ use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::parse_command::ParsedCommand;
 use codex_protocol::protocol::DelegateAgentKind;
 use codex_protocol::protocol::DelegateWorkerStatusEvent;
@@ -30,6 +31,7 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::codex_delegate::run_codex_conversation_interactive;
 use crate::codex_delegate::run_codex_conversation_one_shot;
+use crate::config::ManagerConfig;
 use crate::features::Feature;
 use crate::function_tool::FunctionCallError;
 use crate::manager_workers::ManagedWorker;
@@ -79,6 +81,8 @@ struct DelegateAgentArgs {
     model: Option<String>,
     #[serde(default, alias = "manager_id")]
     worker_id: Option<String>,
+    #[serde(default, alias = "reasoning_effort")]
+    reasoning: Option<ReasoningEffort>,
     #[serde(default)]
     action: WorkerAction,
     #[serde(default)]
@@ -349,6 +353,7 @@ struct WorkerStatusEmitter {
     turn: Arc<TurnContext>,
     worker_id: String,
     worker_model: String,
+    reasoning_effort: Option<ReasoningEffort>,
     agent_kind: DelegateAgentKind,
     display_name: Option<String>,
     last_status: Option<DelegateWorkerStatusKind>,
@@ -362,6 +367,7 @@ impl WorkerStatusEmitter {
         turn: Arc<TurnContext>,
         worker_id: String,
         worker_model: String,
+        reasoning_effort: Option<ReasoningEffort>,
         agent_kind: DelegateAgentKind,
         display_name: Option<String>,
     ) -> Self {
@@ -370,6 +376,7 @@ impl WorkerStatusEmitter {
             turn,
             worker_id,
             worker_model,
+            reasoning_effort,
             agent_kind,
             display_name,
             last_status: None,
@@ -390,6 +397,7 @@ impl WorkerStatusEmitter {
             let event = DelegateWorkerStatusEvent {
                 worker_id: self.worker_id.clone(),
                 worker_model: self.worker_model.clone(),
+                reasoning_effort: self.reasoning_effort,
                 agent_kind: self.agent_kind,
                 parent_worker_id: None,
                 status,
@@ -518,6 +526,31 @@ fn parse_args(
                     noun_for_kind(kind)
                 )
                 .into(),
+            ));
+        }
+
+        if parsed.reasoning.is_some() && !matches!(parsed.action, WorkerAction::Start) {
+            return Err(FunctionCallError::RespondToModel(
+                format!(
+                    "{} reasoning is only supported when starting a new {}",
+                    tool_name_for_kind(kind),
+                    noun_for_kind(kind)
+                )
+                .into(),
+            ));
+        }
+
+        if kind == DelegateAgentKind::Manager && parsed.reasoning.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "delegate_manager does not support a reasoning override; set reasoning when starting a worker instead."
+                    .into(),
+            ));
+        }
+
+        if kind == DelegateAgentKind::Manager && parsed.model.is_some() {
+            return Err(FunctionCallError::RespondToModel(
+                "delegate_manager cannot override the manager model; configure it via /manager or CLI/config instead."
+                    .into(),
             ));
         }
 
@@ -738,6 +771,81 @@ impl ToolHandler for DelegateAgentHandler {
     }
 }
 
+const SUPPORTED_AUTO_WORKER_MODELS: &[&str] = &["gpt-5.1", "gpt-5.1-codex"];
+const XHIGH_REASONING_MODELS: &[&str] = &["gpt-5.1-codex-max"];
+fn supports_xhigh_reasoning(model: &str) -> bool {
+    XHIGH_REASONING_MODELS
+        .iter()
+        .any(|supported| model.starts_with(supported))
+}
+
+fn resolve_worker_model(
+    args_model: &Option<String>,
+    manager_config: &ManagerConfig,
+    session_model: &str,
+) -> Result<String, FunctionCallError> {
+    if manager_config.worker_model_auto && args_model.is_none() {
+        return Err(FunctionCallError::RespondToModel(
+            "delegate_worker requires `model` when worker model auto mode is enabled. Choose gpt-5.1 for general tasks or gpt-5.1-codex for coding work."
+                .into(),
+        ));
+    }
+
+    let resolved = args_model
+        .clone()
+        .or_else(|| manager_config.worker_model.clone())
+        .unwrap_or_else(|| session_model.to_string());
+
+    if manager_config.worker_model_auto
+        && !SUPPORTED_AUTO_WORKER_MODELS
+            .iter()
+            .any(|m| resolved.starts_with(m))
+    {
+        return Err(FunctionCallError::RespondToModel(
+            format!(
+                "delegate_worker worker model auto mode only supports gpt-5.1 or gpt-5.1-codex (got {resolved})."
+            )
+            .into(),
+        ));
+    }
+
+    Ok(resolved)
+}
+
+fn resolve_worker_reasoning(
+    args_reasoning: Option<ReasoningEffort>,
+    manager_config: &ManagerConfig,
+    session_reasoning: Option<ReasoningEffort>,
+    model: &str,
+) -> Result<Option<ReasoningEffort>, FunctionCallError> {
+    let effort: Option<ReasoningEffort> = if let Some(effort) = args_reasoning {
+        Some(effort)
+    } else if manager_config.worker_reasoning_auto {
+        return Err(FunctionCallError::RespondToModel(
+            "delegate_worker requires `reasoning` when worker reasoning auto mode is enabled. Allowed: none, minimal, low, medium, high, xhigh (xhigh only on gpt-5.1-codex-max)."
+                .into(),
+        ));
+    } else {
+        manager_config
+            .worker_reasoning_effort
+            .or(manager_config.manager_reasoning_effort)
+            .or(session_reasoning)
+    };
+
+    if let Some(ReasoningEffort::XHigh) = effort
+        && !supports_xhigh_reasoning(model)
+    {
+        return Err(FunctionCallError::RespondToModel(
+                format!(
+                    "reasoning xhigh is only supported for gpt-5.1-codex-max workers (requested model: {model})."
+                )
+                .into(),
+            ));
+    }
+
+    Ok(effort)
+}
+
 async fn start_agent(
     kind: DelegateAgentKind,
     session: Arc<Session>,
@@ -757,28 +865,29 @@ async fn start_agent(
     let agent_model = match kind {
         DelegateAgentKind::Worker => {
             agent_config.manager.enabled = false;
-            let model = args
-                .model
-                .clone()
-                .or_else(|| agent_config.manager.worker_model.clone())
-                .unwrap_or_else(|| agent_config.model.clone());
+            let session_reasoning = agent_config.model_reasoning_effort;
+            let session_model = agent_config.model.clone();
+            let model = resolve_worker_model(&args.model, &agent_config.manager, &session_model)?;
+            let effort = resolve_worker_reasoning(
+                args.reasoning,
+                &agent_config.manager,
+                session_reasoning,
+                &model,
+            )?;
             agent_config.model = model.clone();
-            let effort = agent_config
-                .manager
-                .worker_reasoning_effort
-                .or(agent_config.manager.manager_reasoning_effort)
-                .or(agent_config.model_reasoning_effort);
             agent_config.model_reasoning_effort = effort;
             agent_config.manager.manager_reasoning_effort = None;
             agent_config.manager.worker_reasoning_effort = None;
+            agent_config.manager.worker_model_auto = false;
+            agent_config.manager.worker_reasoning_auto = false;
             model
         }
         DelegateAgentKind::Manager => {
             agent_config.manager.enabled = true;
-            let model = args
-                .model
+            let model = agent_config
+                .manager
+                .manager_model
                 .clone()
-                .or_else(|| agent_config.manager.manager_model.clone())
                 .unwrap_or_else(|| agent_config.model.clone());
             agent_config.model = model.clone();
             agent_config.manager.manager_model = Some(model.clone());
@@ -806,6 +915,7 @@ async fn start_agent(
     );
 
     let cancel = CancellationToken::new();
+    let reasoning_effort = agent_config.model_reasoning_effort;
     let worker_codex = run_codex_conversation_interactive(
         agent_config,
         Arc::clone(&auth_manager),
@@ -841,6 +951,7 @@ async fn start_agent(
     let worker = Arc::new(ManagedWorker::new(
         worker_id.clone(),
         agent_model.clone(),
+        reasoning_effort,
         kind,
         worker_codex,
         cancel,
@@ -872,6 +983,7 @@ async fn start_agent(
         Arc::clone(&turn),
         worker_id.clone(),
         worker.model.clone(),
+        worker.reasoning_effort,
         kind,
         display_name,
     );
@@ -992,6 +1104,7 @@ async fn resume_agent(
         Arc::clone(&turn),
         worker_id.clone(),
         worker.model.clone(),
+        worker.reasoning_effort,
         expected_kind,
         display_name,
     );
@@ -1413,6 +1526,7 @@ fn wrong_kind_error(expected: DelegateAgentKind, actual: DelegateAgentKind) -> F
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::ManagerConfig;
     use pretty_assertions::assert_eq;
 
     fn parse(input: &str) -> Result<DelegateAgentArgs, FunctionCallError> {
@@ -1535,5 +1649,72 @@ mod tests {
             sanitize_generated_display_name(raw).as_deref(),
             Some("Fix parsing loop")
         );
+    }
+
+    #[test]
+    fn reasoning_only_allowed_on_start() {
+        let err = parse(
+            r#"{"action":"message","reasoning":"high","worker_id":"worker-1","objective":"hi"}"#,
+        )
+        .unwrap_err();
+        match err {
+            FunctionCallError::RespondToModel(msg) => {
+                assert!(msg.content.contains("reasoning is only supported"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn reasoning_is_parsed_on_start() {
+        let args = parse(r#"{"objective":"do work","reasoning":"low"}"#).unwrap();
+        assert_eq!(args.reasoning, Some(ReasoningEffort::Low));
+    }
+
+    #[test]
+    fn xhigh_requires_codex_max_model() {
+        let manager_config = ManagerConfig {
+            worker_model_auto: false,
+            worker_reasoning_auto: false,
+            ..ManagerConfig::default()
+        };
+        for model in ["gpt-5.1", "gpt-5.1-codex"] {
+            let err = resolve_worker_reasoning(
+                Some(ReasoningEffort::XHigh),
+                &manager_config,
+                None,
+                model,
+            )
+            .unwrap_err();
+            match err {
+                FunctionCallError::RespondToModel(msg) => {
+                    assert!(msg.content.contains("codex-max"));
+                }
+                other => panic!("unexpected error: {other:?}"),
+            }
+        }
+        let allowed = resolve_worker_reasoning(
+            Some(ReasoningEffort::XHigh),
+            &manager_config,
+            None,
+            "gpt-5.1-codex-max",
+        )
+        .unwrap();
+        assert_eq!(allowed, Some(ReasoningEffort::XHigh));
+    }
+
+    #[test]
+    fn auto_model_requires_explicit_choice() {
+        let manager_config = ManagerConfig {
+            worker_model_auto: true,
+            ..ManagerConfig::default()
+        };
+        let err = resolve_worker_model(&None, &manager_config, "gpt-5.1").unwrap_err();
+        match err {
+            FunctionCallError::RespondToModel(msg) => {
+                assert!(msg.content.contains("requires `model`"));
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

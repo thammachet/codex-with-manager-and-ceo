@@ -2,6 +2,7 @@ use std::mem::swap;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::OnceLock;
 
 use anyhow::Result;
 use codex_core::CodexAuth;
@@ -19,6 +20,7 @@ use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::SessionConfiguredEvent;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::user_input::UserInput;
+use escargot::CargoBuild;
 use serde_json::Value;
 use tempfile::TempDir;
 use wiremock::MockServer;
@@ -45,6 +47,22 @@ pub enum ShellModelOutput {
     ShellCommand,
     LocalShell,
     // UnifiedExec has its own set of tests
+}
+
+fn codex_exe_path() -> anyhow::Result<PathBuf> {
+    static CODEX_EXE: OnceLock<PathBuf> = OnceLock::new();
+    let exe = CODEX_EXE.get_or_init(|| {
+        if let Ok(cmd) = assert_cmd::Command::cargo_bin("codex") {
+            return PathBuf::from(cmd.get_program().to_os_string());
+        }
+        let artifact = CargoBuild::new()
+            .package("codex-cli")
+            .bin("codex")
+            .run()
+            .unwrap_or_else(|err| panic!("failed to build codex binary for tests: {err}"));
+        artifact.path().to_path_buf()
+    });
+    Ok(exe.clone())
 }
 
 pub struct TestCodexBuilder {
@@ -137,6 +155,8 @@ impl TestCodexBuilder {
         config.model_provider = model_provider;
         if let Ok(cmd) = assert_cmd::Command::cargo_bin("codex") {
             config.codex_linux_sandbox_exe = Some(PathBuf::from(cmd.get_program().to_os_string()));
+        } else {
+            config.codex_linux_sandbox_exe = Some(codex_exe_path()?);
         }
 
         let mut mutators = vec![];

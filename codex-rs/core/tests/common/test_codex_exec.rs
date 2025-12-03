@@ -1,5 +1,6 @@
 #![allow(clippy::expect_used)]
 use codex_core::auth::CODEX_API_KEY_ENV_VAR;
+use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
 use wiremock::MockServer;
@@ -34,8 +35,20 @@ impl TestCodexExecBuilder {
 }
 
 pub fn test_codex_exec() -> TestCodexExecBuilder {
-    TestCodexExecBuilder {
-        home: TempDir::new().expect("create temp home"),
-        cwd: TempDir::new().expect("create temp cwd"),
-    }
+    let home = TempDir::new().expect("create temp home");
+    let cwd = TempDir::new().expect("create temp cwd");
+    let config = r#"
+model = "gpt-4o"
+model_provider = "openai"
+[features]
+apply_patch_freeform = true
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
+"#;
+    fs::write(home.path().join("config.toml"), config).expect("write config.toml");
+    TestCodexExecBuilder { home, cwd }
 }

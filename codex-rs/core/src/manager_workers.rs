@@ -15,6 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::codex::Codex;
 use crate::function_tool::FunctionCallError;
+use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::protocol::DelegateAgentKind;
 use codex_protocol::protocol::Op;
 
@@ -22,6 +23,7 @@ use codex_protocol::protocol::Op;
 pub(crate) struct ManagedWorker {
     pub(crate) id: String,
     pub(crate) model: String,
+    pub(crate) reasoning_effort: Option<ReasoningEffort>,
     pub(crate) agent_kind: DelegateAgentKind,
     pub(crate) codex: Codex,
     pub(crate) cancel_token: CancellationToken,
@@ -34,6 +36,7 @@ impl ManagedWorker {
     pub(crate) fn new(
         id: String,
         model: String,
+        reasoning_effort: Option<ReasoningEffort>,
         agent_kind: DelegateAgentKind,
         codex: Codex,
         cancel_token: CancellationToken,
@@ -42,6 +45,7 @@ impl ManagedWorker {
         Self {
             id,
             model,
+            reasoning_effort,
             agent_kind,
             codex,
             cancel_token,

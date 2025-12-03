@@ -38,6 +38,12 @@ base_url = "http://127.0.0.1:0/v1"
 wire_api = "chat"
 request_max_retries = 0
 stream_max_retries = 0
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#,
     )
 }
@@ -137,6 +143,12 @@ model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 forced_login_method = "{forced_method}"
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
     );
     std::fs::write(config_toml, contents)
@@ -153,6 +165,12 @@ model = "mock-model"
 approval_policy = "never"
 sandbox_mode = "danger-full-access"
 forced_chatgpt_workspace_id = "{workspace_id}"
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
     );
     std::fs::write(config_toml, contents)

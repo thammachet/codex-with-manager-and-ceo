@@ -71,6 +71,12 @@ wire_api = "chat"
 request_max_retries = 0
 stream_max_retries = 0
 {requires_line}
+
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
 "#
     );
     std::fs::write(config_toml, contents)

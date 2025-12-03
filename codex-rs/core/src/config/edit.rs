@@ -29,8 +29,10 @@ pub enum ConfigEdit {
         enabled: bool,
         manager_model: Option<String>,
         worker_model: Option<String>,
+        worker_model_auto: bool,
         manager_reasoning_effort: Option<ReasoningEffort>,
         worker_reasoning_effort: Option<ReasoningEffort>,
+        worker_reasoning_auto: bool,
     },
     /// Update the CEO orchestration settings.
     SetCeoConfig {
@@ -261,15 +263,19 @@ impl ConfigDocument {
                 enabled,
                 manager_model,
                 worker_model,
+                worker_model_auto,
                 manager_reasoning_effort,
                 worker_reasoning_effort,
+                worker_reasoning_auto,
             } => {
                 let manager_config = ManagerConfig {
                     enabled: *enabled,
                     manager_model: manager_model.clone(),
                     worker_model: worker_model.clone(),
+                    worker_model_auto: *worker_model_auto,
                     manager_reasoning_effort: *manager_reasoning_effort,
                     worker_reasoning_effort: *worker_reasoning_effort,
+                    worker_reasoning_auto: *worker_reasoning_auto,
                 };
                 if manager_config == ManagerConfig::default() {
                     Ok(self.clear(Scope::Global, &["manager"]))
@@ -287,6 +293,11 @@ impl ConfigDocument {
                         &["manager", "worker_model"],
                         &manager_config.worker_model,
                     );
+                    mutated |= self.write_value(
+                        Scope::Global,
+                        &["manager", "worker_model_auto"],
+                        value(manager_config.worker_model_auto),
+                    );
                     mutated |= self.write_reasoning_value(
                         &["manager", "manager_reasoning_effort"],
                         manager_config.manager_reasoning_effort,
@@ -294,6 +305,11 @@ impl ConfigDocument {
                     mutated |= self.write_reasoning_value(
                         &["manager", "worker_reasoning_effort"],
                         manager_config.worker_reasoning_effort,
+                    );
+                    mutated |= self.write_value(
+                        Scope::Global,
+                        &["manager", "worker_reasoning_auto"],
+                        value(manager_config.worker_reasoning_auto),
                     );
                     Ok(mutated)
                 }
@@ -602,8 +618,10 @@ impl ConfigEditsBuilder {
             enabled: manager.enabled,
             manager_model: manager.manager_model.clone(),
             worker_model: manager.worker_model.clone(),
+            worker_model_auto: manager.worker_model_auto,
             manager_reasoning_effort: manager.manager_reasoning_effort,
             worker_reasoning_effort: manager.worker_reasoning_effort,
+            worker_reasoning_auto: manager.worker_reasoning_auto,
         });
         self
     }
@@ -1151,8 +1169,10 @@ model_reasoning_effort = "high"
             enabled: true,
             manager_model: Some("gpt-5.1".to_string()),
             worker_model: Some("gpt-5-codex".to_string()),
+            worker_model_auto: true,
             manager_reasoning_effort: Some(ReasoningEffort::High),
             worker_reasoning_effort: Some(ReasoningEffort::Low),
+            worker_reasoning_auto: true,
         };
 
         ConfigEditsBuilder::new(&codex_home)
@@ -1167,8 +1187,10 @@ model_reasoning_effort = "high"
 enabled = true
 manager_model = "gpt-5.1"
 worker_model = "gpt-5-codex"
+worker_model_auto = true
 manager_reasoning_effort = "high"
 worker_reasoning_effort = "low"
+worker_reasoning_auto = true
 "#;
         assert_eq!(contents, expected);
     }
@@ -1245,6 +1267,8 @@ model_reasoning_effort = "high"
             worker_model: None,
             manager_reasoning_effort: Some(ReasoningEffort::Medium),
             worker_reasoning_effort: None,
+            worker_model_auto: false,
+            worker_reasoning_auto: false,
         };
         ConfigEditsBuilder::new(codex_home)
             .set_manager_config(&manager)

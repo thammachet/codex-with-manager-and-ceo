@@ -71,8 +71,10 @@ pub(crate) enum AppEvent {
         enabled: Option<bool>,
         manager_model: Option<Option<String>>,
         worker_model: Option<Option<String>>,
+        worker_model_auto: Option<bool>,
         manager_reasoning: Option<Option<ReasoningEffort>>,
         worker_reasoning: Option<Option<ReasoningEffort>>,
+        worker_reasoning_auto: Option<bool>,
         persist: bool,
     },
     /// Apply CEO orchestration updates.

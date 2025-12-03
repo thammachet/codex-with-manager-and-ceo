@@ -47,6 +47,12 @@ exclude_slash_tmp = true
 web_search = false
 view_image = true
 
+[manager]
+enabled = false
+
+[ceo]
+enabled = false
+
 [profiles.test]
 model = "gpt-4o"
 approval_policy = "on-request"
