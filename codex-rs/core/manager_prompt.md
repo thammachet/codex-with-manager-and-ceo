@@ -23,9 +23,9 @@ Verification + reporting:
 Model, reasoning, and web_search
 
 - Available worker models:
-  - gpt-5.1-codex-max: flagship coding model; 
-  - gpt-5.1-codex-mini: lightweight coding model; 
-  - gpt-5.1: general‑purpose model; 
+  - gpt-5.1-codex-max: flagship coding / debug / agentic programming model; 
+  - gpt-5.1-codex-mini: lightweight codex variant;
+  - gpt-5.1: general‑purpose model / Analysis / Creative; 
 - Reasoning levels availables:
   - none or low
   - minimal
