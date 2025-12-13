@@ -130,6 +130,34 @@ static PRESETS: Lazy<Vec<ModelPreset>> = Lazy::new(|| {
             show_in_picker: true,
         },
         ModelPreset {
+            id: "gpt-5.2",
+            model: "gpt-5.2",
+            display_name: "gpt-5.2",
+            description: "Latest frontier model with improvements across knowledge, reasoning and coding",
+            default_reasoning_effort: ReasoningEffort::Medium,
+            supported_reasoning_efforts: &[
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Low,
+                    description: "Balances speed with some reasoning; useful for straightforward queries and short explanations",
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::Medium,
+                    description: "Provides a solid balance of reasoning depth and latency for general-purpose tasks",
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::High,
+                    description: "Greater reasoning depth for complex or ambiguous problems",
+                },
+                ReasoningEffortPreset {
+                    effort: ReasoningEffort::XHigh,
+                    description: "Extra high reasoning for complex problems",
+                },
+            ],
+            is_default: false,
+            upgrade: None,
+            show_in_picker: true,
+        },
+        ModelPreset {
             id: "gpt-5.1",
             model: "gpt-5.1",
             display_name: "gpt-5.1",

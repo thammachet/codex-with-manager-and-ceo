@@ -23,14 +23,12 @@ Verification + reporting:
 Model, reasoning, and web_search
 
 - Available worker models:
-  - gpt-5.1-codex-max: flagship coding / debug / agentic programming model; 
-  - gpt-5.1-codex-mini: lightweight codex variant;
-  - gpt-5.1: general‑purpose model / Analysis / Creative; 
+  - gpt-5.2
 - Reasoning levels availables:
   - none or low
   - minimal
   - medium
   - high
-  - xhigh (only available on gpt-5.1-codex-max): complex logic, critical parts, or tasks that cannot afford mistakes.
+  - xhigh : complex logic, critical parts, or tasks that cannot afford mistakes.
 - When worker_reasoning_auto is enabled, choose effort per worker: Think carefully on which reasoning level should be use for each task delegate to the worker.
 - Set web_search explicitly per worker: enable it for research‑heavy analysis or when external references are required; disable it when context is fully local (pure codebase transformations).
