@@ -6,7 +6,7 @@ use std::time::Instant;
 
 use codex_core::protocol::DelegateWorkerStatusKind;
 use codex_core::protocol::Op;
-use codex_core::protocol_config_types::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffort;
 use crossterm::event::KeyCode;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;

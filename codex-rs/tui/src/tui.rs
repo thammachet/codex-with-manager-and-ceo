@@ -177,7 +177,6 @@ pub struct Tui {
     terminal_focused: Arc<AtomicBool>,
     notification_backend: Option<DesktopNotificationBackend>,
     enhanced_keys_supported: bool,
-    notification_backend: Option<DesktopNotificationBackend>,
 }
 
 impl Tui {
@@ -205,7 +204,6 @@ impl Tui {
             terminal_focused: Arc::new(AtomicBool::new(true)),
             notification_backend: Some(detect_backend()),
             enhanced_keys_supported,
-            notification_backend: Some(detect_backend()),
         }
     }
 

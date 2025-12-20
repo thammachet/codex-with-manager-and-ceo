@@ -1,5 +1,5 @@
 use clap::ValueEnum;
-use codex_protocol::config_types::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffort;
 
 /// Clap-compatible reasoning effort selector used by CLI surfaces.
 #[derive(Clone, Copy, Debug, ValueEnum, PartialEq, Eq)]

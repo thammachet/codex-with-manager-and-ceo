@@ -450,14 +450,14 @@ fn manager_auto_hint(config: &Config) -> Option<String> {
 
     if config.manager.worker_model_auto {
         hints.push(
-            "Worker model set to Auto via /manager: choose gpt-5.1 for general tasks or gpt-5.1-codex for coding work (xhigh reasoning only on gpt-5.1-codex-max)."
+            "Worker model set to Auto via /manager: choose gpt-5.2 for general tasks or gpt-5.2-codex for coding work (xhigh reasoning only on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max)."
                 .to_string(),
         );
     }
 
     if config.manager.worker_reasoning_auto {
         hints.push(
-            "Worker reasoning set to Auto via /manager: pick none/minimal/low/medium/high for gpt-5.1, or up to xhigh on gpt-5.1-codex-max when needed."
+            "Worker reasoning set to Auto via /manager: pick none/minimal/low/medium/high for gpt-5.2, or up to xhigh on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max when needed."
                 .to_string(),
         );
     }
@@ -522,20 +522,21 @@ fn format_manager_mcp_hint(grouped: &BTreeMap<String, Vec<String>>) -> Option<St
 }
 
 fn session_model(config: &Config) -> String {
+    let fallback = config.model.clone().unwrap_or_default();
     if config.ceo.enabled {
         config
             .ceo
             .ceo_model
             .clone()
-            .unwrap_or_else(|| config.model.clone())
+            .unwrap_or_else(|| fallback.clone())
     } else if config.manager.enabled {
         config
             .manager
             .manager_model
             .clone()
-            .unwrap_or_else(|| config.model.clone())
+            .unwrap_or_else(|| fallback.clone())
     } else {
-        config.model.clone()
+        fallback
     }
 }
 
@@ -3127,6 +3128,9 @@ mod tests {
             approval_policy: config.approval_policy.clone(),
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
+            features: config.features.clone(),
+            manager: config.manager.clone(),
+            ceo: config.ceo.clone(),
             original_config_do_not_use: Arc::clone(&config),
             exec_policy: Arc::new(RwLock::new(ExecPolicy::empty())),
             session_source: SessionSource::Exec,
@@ -3194,6 +3198,9 @@ mod tests {
             approval_policy: config.approval_policy.clone(),
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
+            features: config.features.clone(),
+            manager: config.manager.clone(),
+            ceo: config.ceo.clone(),
             original_config_do_not_use: Arc::clone(&config),
             exec_policy: Arc::new(RwLock::new(ExecPolicy::empty())),
             session_source: SessionSource::Exec,
@@ -3243,15 +3250,14 @@ mod tests {
         );
     }
 
-    #[test]
-    fn manager_prompt_moves_to_developer_instructions() {
+    #[tokio::test]
+    async fn manager_prompt_moves_to_developer_instructions() {
         let codex_home = tempfile::tempdir().expect("create temp dir");
-        let mut config = Config::load_from_base_config_with_overrides(
-            ConfigToml::default(),
-            ConfigOverrides::default(),
-            codex_home.path().to_path_buf(),
-        )
-        .expect("load default config");
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .build()
+            .await
+            .expect("load default config");
         config.manager.enabled = true;
         config.ceo.enabled = false;
 
@@ -3260,15 +3266,14 @@ mod tests {
         assert!(developer.contains(MANAGER_PROMPT.trim()));
     }
 
-    #[test]
-    fn custom_developer_instructions_append_after_manager_prompt() {
+    #[tokio::test]
+    async fn custom_developer_instructions_append_after_manager_prompt() {
         let codex_home = tempfile::tempdir().expect("create temp dir");
-        let mut config = Config::load_from_base_config_with_overrides(
-            ConfigToml::default(),
-            ConfigOverrides::default(),
-            codex_home.path().to_path_buf(),
-        )
-        .expect("load default config");
+        let mut config = ConfigBuilder::default()
+            .codex_home(codex_home.path().to_path_buf())
+            .build()
+            .await
+            .expect("load default config");
         config.manager.enabled = true;
         config.ceo.enabled = false;
         config.developer_instructions = Some("custom developer".to_string());

@@ -26,10 +26,10 @@ use codex_core::protocol::AgentReasoningRawContentDeltaEvent;
 use codex_core::protocol::AgentReasoningRawContentEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DelegateAgentKind;
 use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DelegateWorkerStatusKind;
-use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DeprecationNoticeEvent;
 use codex_core::protocol::ErrorEvent;
 use codex_core::protocol::Event;
@@ -2984,7 +2984,7 @@ impl ChatWidget {
             .manager_model
             .as_deref()
             .map(std::string::ToString::to_string)
-            .unwrap_or_else(|| format!("session default ({})", self.config.model));
+            .unwrap_or_else(|| format!("session default ({})", self.resolved_session_model()));
         let manager_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
             tx.send(AppEvent::OpenManagerModelPopup {
                 target: ManagerModelTarget::Manager,
@@ -3004,7 +3004,7 @@ impl ChatWidget {
             .ceo_model
             .as_deref()
             .map(std::string::ToString::to_string)
-            .unwrap_or_else(|| format!("session default ({})", self.config.model));
+            .unwrap_or_else(|| format!("session default ({})", self.resolved_session_model()));
         let ceo_model_actions: Vec<SelectionAction> = vec![Box::new(|tx| {
             tx.send(AppEvent::OpenManagerModelPopup {
                 target: ManagerModelTarget::Ceo,
@@ -3084,8 +3084,16 @@ impl ChatWidget {
     }
 
     pub(crate) fn open_manager_model_popup(&mut self, target: ManagerModelTarget) {
-        let auth_mode = self.auth_manager.auth().map(|auth| auth.mode);
-        let presets: Vec<ModelPreset> = builtin_model_presets(auth_mode);
+        let presets: Vec<ModelPreset> = match self.models_manager.try_list_models(&self.config) {
+            Ok(models) => models,
+            Err(_) => {
+                self.add_info_message(
+                    "Models are being updated; please try again in a moment.".to_string(),
+                    None,
+                );
+                return;
+            }
+        };
         let mut items: Vec<SelectionItem> = Vec::new();
         let (title, current_model) = match target {
             ManagerModelTarget::Manager => (
@@ -3094,7 +3102,7 @@ impl ChatWidget {
                     .manager
                     .manager_model
                     .clone()
-                    .unwrap_or_else(|| self.config.model.clone()),
+                    .unwrap_or_else(|| self.resolved_session_model()),
             ),
             ManagerModelTarget::Worker => (
                 "Select worker model",
@@ -3114,7 +3122,7 @@ impl ChatWidget {
                     .ceo
                     .ceo_model
                     .clone()
-                    .unwrap_or_else(|| self.config.model.clone()),
+                    .unwrap_or_else(|| self.resolved_session_model()),
             ),
         };
 
@@ -3123,7 +3131,7 @@ impl ChatWidget {
                 let is_current = self.config.manager.manager_model.is_none();
                 let desc = format!(
                     "Use the primary session model (currently {}) for the manager layer.",
-                    self.config.model
+                    self.resolved_session_model()
                 );
                 items.push(SelectionItem {
                     name: "Use session model".into(),
@@ -3150,7 +3158,7 @@ impl ChatWidget {
                 items.push(SelectionItem {
                     name: "Auto-select per worker".into(),
                     description: Some(
-                        "Manager chooses gpt-5.1 (general) or gpt-5.1-codex (coding) per worker based on the task."
+                        "Manager chooses gpt-5.2 (general) or gpt-5.2-codex (coding) per worker based on the task."
                             .into(),
                     ),
                     is_current,
@@ -3198,7 +3206,7 @@ impl ChatWidget {
                 let is_current = self.config.ceo.ceo_model.is_none();
                 let desc = format!(
                     "Use the primary session model (currently {}) for the CEO layer.",
-                    self.config.model
+                    self.resolved_session_model()
                 );
                 items.push(SelectionItem {
                     name: "Use session model".into(),
@@ -3328,7 +3336,7 @@ impl ChatWidget {
                 items.push(SelectionItem {
                     name: "Auto-select per worker".into(),
                     description: Some(
-                        "Manager will pick a reasoning effort per worker (xhigh only on gpt-5.1-codex-max)."
+                        "Manager will pick a reasoning effort per worker (xhigh only on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max)."
                             .into(),
                     ),
                     is_current: auto_current,
@@ -3453,6 +3461,8 @@ impl ChatWidget {
             items,
             ..Default::default()
         });
+    }
+
     fn model_selection_actions(
         model_for_action: String,
         effort_for_action: Option<ReasoningEffortConfig>,
@@ -3661,7 +3671,14 @@ impl ChatWidget {
             .manager
             .manager_model
             .clone()
-            .unwrap_or_else(|| self.config.model.clone())
+            .unwrap_or_else(|| self.resolved_session_model())
+    }
+
+    fn resolved_session_model(&self) -> String {
+        self.config
+            .model
+            .clone()
+            .unwrap_or_else(|| self.model_family.get_model_slug().to_string())
     }
 
     fn resolved_manager_reasoning_effort(&self) -> Option<ReasoningEffortConfig> {

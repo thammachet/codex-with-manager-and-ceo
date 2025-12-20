@@ -6,8 +6,8 @@ Use this example configuration as a starting point. For an explanation of each f
 # Codex example configuration (config.toml)
 #
 # This file lists all keys Codex reads from config.toml, their default values,
-# and concise explanations. Values here mirror the effective defaults compiled
-# into the CLI. Adjust as needed.
+# and concise explanations. Defaults may differ by auth mode; when they do, the
+# comment calls out ChatGPT vs API key defaults. Adjust as needed.
 #
 # Notes
 # - Root keys must appear before tables in TOML.
@@ -18,8 +18,8 @@ Use this example configuration as a starting point. For an explanation of each f
 # Core Model Selection
 ################################################################################
 
-# Primary model used by Codex. Default: "gpt-5.1-codex-max" on all platforms.
-model = "gpt-5.1-codex-max"
+# Primary model used by Codex. Default: "gpt-5.2-codex" with ChatGPT auth; "gpt-5.1-codex-max" with API keys.
+model = "gpt-5.2-codex"
 
 # Model used by the /review feature (code reviews). Default: "gpt-5.1-codex-max".
 review_model = "gpt-5.1-codex-max"
@@ -31,13 +31,13 @@ model_provider = "openai"
 # Uncomment to force values.
 # model_context_window = 128000       # tokens; default: auto for model
 # model_auto_compact_token_limit = 0  # disable/override auto; default: model family specific
-# tool_output_token_limit = 10000  # tokens stored per tool output; default: 10000 for gpt-5.1-codex-max
+# tool_output_token_limit = 10000  # tokens stored per tool output; default: 10000 for gpt-5.2-codex and gpt-5.1-codex-max
 
 ################################################################################
 # Reasoning & Verbosity (Responses API capable models)
 ################################################################################
 
-# Reasoning effort: minimal | low | medium | high | xhigh (default: medium; xhigh on gpt-5.1-codex-max and gpt-5.2)
+# Reasoning effort: minimal | low | medium | high | xhigh (default: medium; xhigh on gpt-5.2-codex, gpt-5.2, and gpt-5.1-codex-max)
 model_reasoning_effort = "medium"
 
 # Reasoning summary: auto | concise | detailed | none (default: auto)
@@ -303,7 +303,7 @@ experimental_use_freeform_apply_patch = false
 [profiles]
 
 # [profiles.default]
-# model = "gpt-5.1-codex-max"
+# model = "gpt-5.2-codex"
 # model_provider = "openai"
 # approval_policy = "on-request"
 # sandbox_mode = "read-only"

@@ -11,9 +11,6 @@ use codex_utils_absolute_path::AbsolutePathBuf;
 use regex_lite::Regex;
 use std::path::PathBuf;
 
-#[cfg(target_os = "linux")]
-use assert_cmd::cargo::cargo_bin;
-
 pub mod process;
 pub mod responses;
 pub mod streaming_sse;

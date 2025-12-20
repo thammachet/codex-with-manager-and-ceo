@@ -18,10 +18,10 @@ use codex_core::protocol::AgentReasoningDeltaEvent;
 use codex_core::protocol::AgentReasoningEvent;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::BackgroundEventEvent;
+use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::DelegateAgentKind;
 use codex_core::protocol::DelegateWorkerStatusEvent;
 use codex_core::protocol::DelegateWorkerStatusKind;
-use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::Event;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
@@ -159,9 +159,9 @@ async fn resumed_initial_messages_render_history() {
     );
 }
 
-#[test]
-fn delegate_worker_status_updates_agent_rows() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn delegate_worker_status_updates_agent_rows() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -198,9 +198,9 @@ fn delegate_worker_status_updates_agent_rows() {
     assert_eq!(row.depth, 1);
 }
 
-#[test]
-fn delegate_worker_status_multiple_workers_show_aggregate() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn delegate_worker_status_multiple_workers_show_aggregate() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -267,9 +267,9 @@ fn delegate_worker_status_multiple_workers_show_aggregate() {
     assert_eq!(rows[1].status, DelegateWorkerStatusKind::RunningTool);
 }
 
-#[test]
-fn delegate_manager_and_worker_statuses_render_hierarchy() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn delegate_manager_and_worker_statuses_render_hierarchy() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -319,9 +319,9 @@ fn delegate_manager_and_worker_statuses_render_hierarchy() {
     assert_eq!(rows[1].depth, 2);
 }
 
-#[test]
-fn delegate_worker_status_resets_when_task_restarts() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn delegate_worker_status_resets_when_task_restarts() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -362,9 +362,9 @@ fn delegate_worker_status_resets_when_task_restarts() {
     assert!(widget.agent_rows().is_empty());
 }
 
-#[test]
-fn worker_name_used_for_display_name_when_present() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn worker_name_used_for_display_name_when_present() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -396,9 +396,9 @@ fn worker_name_used_for_display_name_when_present() {
     assert_eq!(rows[0].display_name.as_deref(), Some("Database Re-Run"));
 }
 
-#[test]
-fn manager_message_mentions_child_when_display_name_provided() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn manager_message_mentions_child_when_display_name_provided() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -448,9 +448,9 @@ fn manager_message_mentions_child_when_display_name_provided() {
     );
 }
 
-#[test]
-fn event_display_name_overrides_message() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn event_display_name_overrides_message() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -482,9 +482,9 @@ fn event_display_name_overrides_message() {
     assert_eq!(rows[0].display_name.as_deref(), Some("Infra Audit"));
 }
 
-#[test]
-fn manager_display_name_hidden_when_child_matches() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn manager_display_name_hidden_when_child_matches() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),
@@ -534,9 +534,9 @@ fn manager_display_name_hidden_when_child_matches() {
     assert_eq!(rows[1].display_name.as_deref(), Some(expected.as_str()));
 }
 
-#[test]
-fn worker_display_name_truncates_long_objectives() {
-    let (mut chat, _rx, _ops) = make_chatwidget_manual();
+#[tokio::test]
+async fn worker_display_name_truncates_long_objectives() {
+    let (mut chat, _rx, _ops) = make_chatwidget_manual(None).await;
 
     chat.handle_codex_event(Event {
         id: "turn".into(),

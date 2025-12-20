@@ -931,9 +931,14 @@ impl App {
                     && self.config.manager.manager_model != manager_model_update
                 {
                     self.config.manager.manager_model = manager_model_update.clone();
-                    let display = manager_model_update
-                        .clone()
-                        .unwrap_or_else(|| self.config.model.clone());
+                    let display = manager_model_update.clone().unwrap_or_else(|| {
+                        self.config.model.clone().unwrap_or_else(|| {
+                            self.chat_widget
+                                .get_model_family()
+                                .get_model_slug()
+                                .to_string()
+                        })
+                    });
                     let message = if manager_model_update.is_some() {
                         format!(
                             "Manager model set to {display}. Start a new session (/new) to apply."
@@ -952,15 +957,22 @@ impl App {
                     self.config.manager.worker_model_auto = auto;
                     self.config.manager.worker_model = None;
                     let message = if auto {
-                        "Worker model set to auto. Manager will choose gpt-5.1 or gpt-5.1-codex per worker. Start a new session (/new) to apply."
+                        "Worker model set to auto. Manager will choose gpt-5.2 or gpt-5.2-codex per worker. Start a new session (/new) to apply."
                             .to_string()
                     } else {
-                        let fallback = self
-                            .config
-                            .manager
-                            .manager_model
-                            .clone()
-                            .unwrap_or_else(|| self.config.model.clone());
+                        let fallback =
+                            self.config
+                                .manager
+                                .manager_model
+                                .clone()
+                                .unwrap_or_else(|| {
+                                    self.config.model.clone().unwrap_or_else(|| {
+                                        self.chat_widget
+                                            .get_model_family()
+                                            .get_model_slug()
+                                            .to_string()
+                                    })
+                                });
                         format!(
                             "Worker model auto disabled; workers inherit the manager model ({fallback}). Start a new session (/new) to apply."
                         )
@@ -978,7 +990,14 @@ impl App {
                         .manager
                         .manager_model
                         .clone()
-                        .unwrap_or_else(|| self.config.model.clone());
+                        .unwrap_or_else(|| {
+                            self.config.model.clone().unwrap_or_else(|| {
+                                self.chat_widget
+                                    .get_model_family()
+                                    .get_model_slug()
+                                    .to_string()
+                            })
+                        });
                     let display = worker_model_update.clone().unwrap_or(fallback);
                     let message = if worker_model_update.is_some() {
                         format!(
@@ -1097,9 +1116,14 @@ impl App {
                     && self.config.ceo.ceo_model != model_update
                 {
                     self.config.ceo.ceo_model = model_update.clone();
-                    let display = model_update
-                        .clone()
-                        .unwrap_or_else(|| self.config.model.clone());
+                    let display = model_update.clone().unwrap_or_else(|| {
+                        self.config.model.clone().unwrap_or_else(|| {
+                            self.chat_widget
+                                .get_model_family()
+                                .get_model_slug()
+                                .to_string()
+                        })
+                    });
                     let message = if model_update.is_some() {
                         format!("CEO model set to {display}. Start a new session (/new) to apply.")
                     } else {

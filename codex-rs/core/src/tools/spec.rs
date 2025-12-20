@@ -253,7 +253,7 @@ fn create_delegate_worker_tool() -> ToolSpec {
         "model".to_string(),
         JsonSchema::String {
             description: Some(
-                "Optional override for the worker's model. Use gpt-5.1 for general tasks or gpt-5.1-codex for coding (xhigh reasoning only on gpt-5.1-codex-max). Required when worker model auto mode is enabled via /manager."
+                "Optional override for the worker's model. Use gpt-5.2 for general tasks or gpt-5.2-codex for coding (xhigh reasoning only on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max). Required when worker model auto mode is enabled via /manager."
                     .to_string(),
             ),
         },
@@ -271,7 +271,7 @@ fn create_delegate_worker_tool() -> ToolSpec {
         "reasoning".to_string(),
         JsonSchema::String {
             description: Some(
-                "Optional reasoning effort for this worker (none, minimal, low, medium, high, xhigh). Xhigh is only supported on gpt-5.1-codex-max. Required when worker reasoning auto mode is enabled via /manager."
+                "Optional reasoning effort for this worker (none, minimal, low, medium, high, xhigh). Xhigh is only supported on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max. Required when worker reasoning auto mode is enabled via /manager."
                     .to_string(),
             ),
         },

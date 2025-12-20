@@ -15,7 +15,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::codex::Codex;
 use crate::function_tool::FunctionCallError;
-use codex_protocol::config_types::ReasoningEffort;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_protocol::protocol::DelegateAgentKind;
 use codex_protocol::protocol::Op;
 

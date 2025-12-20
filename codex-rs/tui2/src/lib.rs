@@ -219,6 +219,16 @@ pub async fn run_main(
         show_raw_agent_reasoning: cli.oss.then_some(true),
         tools_web_search_request: None,
         additional_writable_roots: additional_dirs,
+        manager_enabled: None,
+        manager_model: None,
+        worker_model: None,
+        worker_model_auto: None,
+        manager_reasoning_effort: None,
+        worker_reasoning_effort: None,
+        worker_reasoning_auto: None,
+        ceo_enabled: None,
+        ceo_model: None,
+        ceo_reasoning_effort: None,
     };
 
     let config = load_config_or_exit(cli_kv_overrides.clone(), overrides.clone()).await;

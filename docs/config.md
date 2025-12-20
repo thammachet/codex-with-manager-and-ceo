@@ -63,18 +63,19 @@ Notes:
 The model that Codex should use.
 
 ```toml
-model = "gpt-5.1"  # overrides the default ("gpt-5.1-codex" in this fork)
+model = "gpt-5.1"  # overrides the default (gpt-5.2-codex for ChatGPT auth, gpt-5.1-codex-max for API keys)
 ```
 
 Built-in OpenAI presets:
 
-- `gpt-5.1-codex-max` (default preset in pickers): Latest Codex-optimized flagship for deep and fast reasoning.
+- `gpt-5.2-codex` (default preset in pickers): Latest frontier agentic coding model.
+- `gpt-5.1-codex-max`: Codex-optimized flagship for deep and fast reasoning.
 - `gpt-5.1-codex`: Codex-optimized baseline.
 - `gpt-5.1-codex-mini`: Cheaper, faster Codex-optimized option.
 - `gpt-5.2`: Latest frontier model with improvements across knowledge, reasoning and coding.
 - `gpt-5.1`: Broad world knowledge with strong general reasoning.
 
-Set `model = "gpt-5.2"` to use the new model; the default remains the gpt-5.1-codex variant shipped with this fork.
+Set `model = "gpt-5.2"` to use the general frontier model; defaults are `gpt-5.2-codex` for ChatGPT auth and `gpt-5.1-codex-max` for API keys unless overridden.
 
 ### manager
 
@@ -85,17 +86,17 @@ Codex routes each prompt through a planning manager that coordinates one or more
 # enabled = true           # default; set to false to talk directly to the worker
 manager_model = "gpt-5.1"      # optional; defaults to whatever `model` is set to
 worker_model = "gpt-5-codex"   # optional; workers fall back to the manager model when omitted
-worker_model_auto = true       # optional; when true, the manager chooses gpt-5.1 (general) or gpt-5.1-codex (coding) per worker
+worker_model_auto = true       # optional; when true, the manager chooses gpt-5.2 (general) or gpt-5.2-codex (coding) per worker
 manager_reasoning_effort = "high"    # optional; inherits the session's reasoning when omitted
 worker_reasoning_effort = "medium"   # optional; workers fall back to the manager reasoning when omitted
-worker_reasoning_auto = true         # optional; when true, the manager chooses the worker's reasoning effort per task (xhigh only on gpt-5.1-codex-max)
+worker_reasoning_auto = true         # optional; when true, the manager chooses the worker's reasoning effort per task (xhigh only on gpt-5.2-codex, gpt-5.2, or gpt-5.1-codex-max)
 ```
 
 - Use `codex --no-manager` (or `codex exec --no-manager`) to bypass the manager for a session, and `--manager-model <slug>` / `--worker-model <slug>` to override the models without editing config files. If you disable the manager in config, `--manager` re-enables it temporarily.
 - Use `--manager-reasoning <none|minimal|low|medium|high>` and `--worker-reasoning <…>` to pin reasoning effort for each layer without editing config files. Omit the flags (or remove the TOML keys) to inherit the session’s reasoning defaults.
 - Managers always run with their configured model/reasoning from `/manager`, CLI flags, or config—`delegate_manager` cannot override them. Overrides and auto-picks apply only to workers.
-- When `worker_model_auto` or `worker_reasoning_auto` is set (toggle via the `/manager` command in the TUI), the manager must pick the worker’s model and/or reasoning per task. Pick `gpt-5.1` for general analysis or `gpt-5.1-codex` for coding; xhigh reasoning is only available on `gpt-5.1-codex-max`.
-- Managers and CEOs can also run on `gpt-5.2`; override `manager_model` / `ceo_model` if you want orchestration on the newest frontier model while keeping the worker default unchanged.
+- When `worker_model_auto` or `worker_reasoning_auto` is set (toggle via the `/manager` command in the TUI), the manager must pick the worker’s model and/or reasoning per task. Pick `gpt-5.2` for general analysis or `gpt-5.2-codex` for coding; xhigh reasoning is only available on `gpt-5.2-codex`, `gpt-5.2`, or `gpt-5.1-codex-max`.
+- Managers and CEOs can also run on `gpt-5.2-codex` or `gpt-5.2`; override `manager_model` / `ceo_model` if you want orchestration on the newest frontier model while keeping the worker default unchanged.
 - When the manager layer is active (the default), your prompts go to the manager model. Every `delegate_worker` call spawns a worker that can run tools. Setting `--no-manager` (or `[manager].enabled = false`) restores the previous single-agent behaviour so you can “talk directly to the worker.”
 - Worker-specific instructions should either go into the optional `persona` field on `delegate_worker` (for persistent tone/role changes) or the objective/context (for per-task nuances). The manager prompt already forbids direct tool usage and summarizes worker output for you.
 - Gate search per worker: include `"web_search": true` (or `false`) in a `delegate_worker` call to force that worker to enable/disable the `web_search` tool regardless of the session’s default `web_search_request` feature flag. Use this to spin up research-only workers alongside code-only ones.
@@ -245,13 +246,13 @@ model = "mistral"
 
 ### model_reasoning_effort
 
-If the selected model is known to support reasoning (for example: `o3`, `o4-mini`, `codex-*`, `gpt-5.1-codex-max`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.2`), reasoning is enabled by default when using the Responses API. As explained in the [OpenAI Platform documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning), this can be set to:
+If the selected model is known to support reasoning (for example: `o3`, `o4-mini`, `codex-*`, `gpt-5.2-codex`, `gpt-5.1-codex-max`, `gpt-5.1`, `gpt-5.1-codex`, `gpt-5.2`), reasoning is enabled by default when using the Responses API. As explained in the [OpenAI Platform documentation](https://platform.openai.com/docs/guides/reasoning?api-mode=responses#get-started-with-reasoning), this can be set to:
 
 - `"minimal"`
 - `"low"`
 - `"medium"` (default)
 - `"high"`
-- `"xhigh"` (available on `gpt-5.1-codex-max` and `gpt-5.2`)
+- `"xhigh"` (available on `gpt-5.2-codex`, `gpt-5.2`, and `gpt-5.1-codex-max`)
 
 Note: to minimize reasoning, choose `"minimal"`.
 
@@ -873,7 +874,7 @@ Users can specify config values at multiple levels. Order of precedence is as fo
 1. custom command-line argument, e.g., `--model o3`
 2. as part of a profile, where the `--profile` is specified via a CLI (or in the config file itself)
 3. as an entry in `config.toml`, e.g., `model = "o3"`
-4. the default value that comes with Codex CLI (this fork defaults to the gpt-5.1-codex family; set `model = "gpt-5.2"` if you want the frontier model)
+4. the default value that comes with Codex CLI (defaults to `gpt-5.2-codex` for ChatGPT auth and `gpt-5.1-codex-max` for API keys)
 
 ### history
 
@@ -986,7 +987,7 @@ Valid values:
 
 | Key                                              | Type / Values                                                     | Notes                                                                                                                           |
 | ------------------------------------------------ | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `model`                                          | string                                                            | Model to use (e.g., `gpt-5.1-codex-max`).                                                                                       |
+| `model`                                          | string                                                            | Model to use (e.g., `gpt-5.2-codex`).                                                                                           |
 | `model_provider`                                 | string                                                            | Provider id from `model_providers` (default: `openai`).                                                                         |
 | `model_context_window`                           | number                                                            | Context window tokens.                                                                                                          |
 | `tool_output_token_limit`                        | number                                                            | Token budget for stored function/tool outputs in history (default: 2,560 tokens).                                               |
@@ -1048,4 +1049,3 @@ Valid values:
 | `forced_login_method`                            | `chatgpt` \| `api`                                                | Only allow Codex to be used with ChatGPT or API keys.                                                                           |
 | `forced_chatgpt_workspace_id`                    | string (uuid)                                                     | Only allow Codex to be used with the specified ChatGPT workspace.                                                               |
 | `cli_auth_credentials_store`                     | `file` \| `keyring` \| `auto`                                     | Where to store CLI login credentials (default: `file`).                                                                         |
-

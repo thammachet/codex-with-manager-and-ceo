@@ -207,6 +207,7 @@ pub(crate) async fn intercept_apply_patch(
                         content,
                         content_items: None,
                         success: Some(true),
+                        history_content: None,
                     }))
                 }
                 InternalApplyPatchInvocation::DelegateToExec(apply) => {
@@ -244,14 +245,15 @@ pub(crate) async fn intercept_apply_patch(
                         content,
                         content_items: None,
                         success: Some(true),
+                        history_content: None,
                     }))
                 }
             }
         }
         codex_apply_patch::MaybeApplyPatchVerified::CorrectnessError(parse_error) => {
-            Err(FunctionCallError::RespondToModel(format!(
-                "apply_patch verification failed: {parse_error}"
-            )))
+            Err(FunctionCallError::RespondToModel(
+                format!("apply_patch verification failed: {parse_error}").into(),
+            ))
         }
         codex_apply_patch::MaybeApplyPatchVerified::ShellParseError(error) => {
             tracing::trace!("Failed to parse apply_patch input, {error:?}");

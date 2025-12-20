@@ -1847,6 +1847,7 @@ impl ChatWidget {
             }
             EventMsg::Warning(WarningEvent { message }) => self.on_warning(message),
             EventMsg::Error(ErrorEvent { message, .. }) => self.on_error(message),
+            EventMsg::DelegateWorkerStatus(_) => {}
             EventMsg::McpStartupUpdate(ev) => self.on_mcp_startup_update(ev),
             EventMsg::McpStartupComplete(ev) => self.on_mcp_startup_complete(ev),
             EventMsg::TurnAborted(ev) => match ev.reason {

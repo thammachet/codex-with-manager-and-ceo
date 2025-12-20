@@ -3,8 +3,8 @@
 use codex_core::config::Config;
 use codex_core::config::ConfigOverrides;
 use codex_core::protocol::AskForApproval;
-use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::SandboxMode;
+use codex_protocol::openai_models::ReasoningEffort;
 use codex_utils_json_to_toml::json_to_toml;
 use mcp_types::Tool;
 use mcp_types::ToolInputSchema;
@@ -210,7 +210,6 @@ impl CodexToolCallParam {
             include_apply_patch_tool: None,
             show_raw_agent_reasoning: None,
             tools_web_search_request: None,
-            experimental_sandbox_command_assessment: None,
             additional_writable_roots: Vec::new(),
             manager_enabled,
             manager_model,
