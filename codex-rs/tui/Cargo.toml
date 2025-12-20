@@ -23,7 +23,6 @@ workspace = true
 
 [dependencies]
 anyhow = { workspace = true }
-async-stream = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true, features = ["derive"] }
@@ -41,6 +40,7 @@ codex-feedback = { workspace = true }
 codex-file-search = { workspace = true }
 codex-login = { workspace = true }
 codex-protocol = { workspace = true }
+codex-utils-absolute-path = { workspace = true }
 color-eyre = { workspace = true }
 crossterm = { workspace = true, features = ["bracketed-paste", "event-stream"] }
 derive_more = { workspace = true, features = ["is_variant"] }
@@ -52,7 +52,6 @@ itertools = { workspace = true }
 lazy_static = { workspace = true }
 indexmap = { workspace = true }
 mcp-types = { workspace = true }
-opentelemetry-appender-tracing = { workspace = true }
 pathdiff = { workspace = true }
 pulldown-cmark = { workspace = true }
 rand = { workspace = true }
@@ -79,8 +78,10 @@ tokio = { workspace = true, features = [
     "process",
     "rt-multi-thread",
     "signal",
+    "test-util",
+    "time",
 ] }
-tokio-stream = { workspace = true }
+tokio-stream = { workspace = true, features = ["sync"] }
 toml = { workspace = true }
 tracing = { workspace = true, features = ["log"] }
 tracing-appender = { workspace = true }
@@ -92,6 +93,7 @@ unicode-width = { workspace = true }
 url = { workspace = true }
 
 codex-windows-sandbox = { workspace = true }
+tokio-util = { workspace = true, features = ["time"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }
@@ -103,6 +105,7 @@ arboard = { workspace = true }
 
 
 [dev-dependencies]
+codex-core = { workspace = true, features = ["test-support"] }
 assert_matches = { workspace = true }
 chrono = { workspace = true, features = ["serde"] }
 insta = { workspace = true }
@@ -110,3 +113,4 @@ pretty_assertions = { workspace = true }
 rand = { workspace = true }
 serial_test = { workspace = true }
 vt100 = { workspace = true }
+uuid = { workspace = true }

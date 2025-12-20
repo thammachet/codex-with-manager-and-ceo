@@ -6,27 +6,27 @@ use chrono::TimeZone;
 use chrono::Utc;
 use codex_core::AuthManager;
 use codex_core::config::Config;
-use codex_core::config::ConfigOverrides;
-use codex_core::config::ConfigToml;
+use codex_core::config::ConfigBuilder;
+use codex_core::openai_models::model_family::ModelFamily;
+use codex_core::openai_models::models_manager::ModelsManager;
 use codex_core::protocol::CreditsSnapshot;
 use codex_core::protocol::RateLimitSnapshot;
 use codex_core::protocol::RateLimitWindow;
 use codex_core::protocol::SandboxPolicy;
 use codex_core::protocol::TokenUsage;
-use codex_protocol::config_types::ReasoningEffort;
 use codex_protocol::config_types::ReasoningSummary;
+use codex_protocol::openai_models::ReasoningEffort;
 use insta::assert_snapshot;
 use ratatui::prelude::*;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
-fn test_config(temp_home: &TempDir) -> Config {
-    let mut config = Config::load_from_base_config_with_overrides(
-        ConfigToml::default(),
-        ConfigOverrides::default(),
-        temp_home.path().to_path_buf(),
-    )
-    .expect("load config");
+async fn test_config(temp_home: &TempDir) -> Config {
+    let mut config = ConfigBuilder::default()
+        .codex_home(temp_home.path().to_path_buf())
+        .build()
+        .await
+        .expect("load config");
     config.manager.enabled = false;
     config.ceo.enabled = false;
     config
@@ -38,6 +38,10 @@ fn test_auth_manager(config: &Config) -> AuthManager {
         false,
         config.cli_auth_credentials_store_mode,
     )
+}
+
+fn test_model_family(model_slug: &str, config: &Config) -> ModelFamily {
+    ModelsManager::construct_model_family_offline(model_slug, config)
 }
 
 fn render_lines(lines: &[Line<'static>]) -> Vec<String> {
@@ -81,11 +85,11 @@ fn reset_at_from(captured_at: &chrono::DateTime<chrono::Local>, seconds: i64) ->
         .timestamp()
 }
 
-#[test]
-fn status_snapshot_includes_reasoning_details() {
+#[tokio::test]
+async fn status_snapshot_includes_reasoning_details() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
     config.model_reasoning_effort = Some(ReasoningEffort::High);
     config.model_reasoning_summary = ReasoningSummary::Detailed;
@@ -123,17 +127,24 @@ fn status_snapshot_includes_reasoning_details() {
             resets_at: Some(reset_at_from(&captured_at, 1_200)),
         }),
         credits: None,
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
 
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -145,11 +156,11 @@ fn status_snapshot_includes_reasoning_details() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_includes_monthly_limit() {
+#[tokio::test]
+async fn status_snapshot_includes_monthly_limit() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
     config.cwd = PathBuf::from("/workspace/tests");
 
@@ -174,17 +185,23 @@ fn status_snapshot_includes_monthly_limit() {
         }),
         secondary: None,
         credits: None,
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -196,10 +213,10 @@ fn status_snapshot_includes_monthly_limit() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_shows_unlimited_credits() {
+#[tokio::test]
+async fn status_snapshot_shows_unlimited_credits() {
     let temp_home = TempDir::new().expect("temp home");
-    let config = test_config(&temp_home);
+    let config = test_config(&temp_home).await;
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage::default();
     let captured_at = chrono::Local
@@ -214,16 +231,22 @@ fn status_snapshot_shows_unlimited_credits() {
             unlimited: true,
             balance: None,
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let rendered = render_lines(&composite.display_lines(120));
     assert!(
@@ -234,10 +257,10 @@ fn status_snapshot_shows_unlimited_credits() {
     );
 }
 
-#[test]
-fn status_snapshot_shows_positive_credits() {
+#[tokio::test]
+async fn status_snapshot_shows_positive_credits() {
     let temp_home = TempDir::new().expect("temp home");
-    let config = test_config(&temp_home);
+    let config = test_config(&temp_home).await;
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage::default();
     let captured_at = chrono::Local
@@ -252,16 +275,22 @@ fn status_snapshot_shows_positive_credits() {
             unlimited: false,
             balance: Some("12.5".to_string()),
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let rendered = render_lines(&composite.display_lines(120));
     assert!(
@@ -272,10 +301,10 @@ fn status_snapshot_shows_positive_credits() {
     );
 }
 
-#[test]
-fn status_snapshot_hides_zero_credits() {
+#[tokio::test]
+async fn status_snapshot_hides_zero_credits() {
     let temp_home = TempDir::new().expect("temp home");
-    let config = test_config(&temp_home);
+    let config = test_config(&temp_home).await;
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage::default();
     let captured_at = chrono::Local
@@ -290,16 +319,22 @@ fn status_snapshot_hides_zero_credits() {
             unlimited: false,
             balance: Some("0".to_string()),
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let rendered = render_lines(&composite.display_lines(120));
     assert!(
@@ -308,10 +343,10 @@ fn status_snapshot_hides_zero_credits() {
     );
 }
 
-#[test]
-fn status_snapshot_hides_when_has_no_credits_flag() {
+#[tokio::test]
+async fn status_snapshot_hides_when_has_no_credits_flag() {
     let temp_home = TempDir::new().expect("temp home");
-    let config = test_config(&temp_home);
+    let config = test_config(&temp_home).await;
     let auth_manager = test_auth_manager(&config);
     let usage = TokenUsage::default();
     let captured_at = chrono::Local
@@ -326,16 +361,22 @@ fn status_snapshot_hides_when_has_no_credits_flag() {
             unlimited: true,
             balance: None,
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let rendered = render_lines(&composite.display_lines(120));
     assert!(
@@ -344,11 +385,11 @@ fn status_snapshot_hides_when_has_no_credits_flag() {
     );
 }
 
-#[test]
-fn status_card_token_usage_excludes_cached_tokens() {
+#[tokio::test]
+async fn status_card_token_usage_excludes_cached_tokens() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -365,14 +406,19 @@ fn status_card_token_usage_excludes_cached_tokens() {
         .single()
         .expect("timestamp");
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         None,
+        None,
         now,
+        &model_slug,
     );
     let rendered = render_lines(&composite.display_lines(120));
 
@@ -382,11 +428,11 @@ fn status_card_token_usage_excludes_cached_tokens() {
     );
 }
 
-#[test]
-fn status_snapshot_truncates_in_narrow_terminal() {
+#[tokio::test]
+async fn status_snapshot_truncates_in_narrow_terminal() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.model_provider_id = "openai".to_string();
     config.model_reasoning_effort = Some(ReasoningEffort::High);
     config.model_reasoning_summary = ReasoningSummary::Detailed;
@@ -413,17 +459,23 @@ fn status_snapshot_truncates_in_narrow_terminal() {
         }),
         secondary: None,
         credits: None,
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(70));
     if cfg!(windows) {
@@ -436,11 +488,11 @@ fn status_snapshot_truncates_in_narrow_terminal() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_shows_missing_limits_message() {
+#[tokio::test]
+async fn status_snapshot_shows_missing_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -457,14 +509,19 @@ fn status_snapshot_shows_missing_limits_message() {
         .single()
         .expect("timestamp");
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         None,
+        None,
         now,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -476,11 +533,11 @@ fn status_snapshot_shows_missing_limits_message() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_includes_credits_and_limits() {
+#[tokio::test]
+async fn status_snapshot_includes_credits_and_limits() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -512,17 +569,23 @@ fn status_snapshot_includes_credits_and_limits() {
             unlimited: false,
             balance: Some("37.5".to_string()),
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -534,11 +597,11 @@ fn status_snapshot_includes_credits_and_limits() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_shows_empty_limits_message() {
+#[tokio::test]
+async fn status_snapshot_shows_empty_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -554,6 +617,7 @@ fn status_snapshot_shows_empty_limits_message() {
         primary: None,
         secondary: None,
         credits: None,
+        plan_type: None,
     };
     let captured_at = chrono::Local
         .with_ymd_and_hms(2024, 6, 7, 8, 9, 10)
@@ -561,14 +625,19 @@ fn status_snapshot_shows_empty_limits_message() {
         .expect("timestamp");
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         captured_at,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -580,11 +649,11 @@ fn status_snapshot_shows_empty_limits_message() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_shows_stale_limits_message() {
+#[tokio::test]
+async fn status_snapshot_shows_stale_limits_message() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex-max".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex-max".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -612,18 +681,24 @@ fn status_snapshot_shows_stale_limits_message() {
             resets_at: Some(reset_at_from(&captured_at, 1_800)),
         }),
         credits: None,
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
     let now = captured_at + ChronoDuration::minutes(20);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         now,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -635,11 +710,11 @@ fn status_snapshot_shows_stale_limits_message() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_snapshot_cached_limits_hide_credits_without_flag() {
+#[tokio::test]
+async fn status_snapshot_cached_limits_hide_credits_without_flag() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
-    config.model = "gpt-5.1-codex".to_string();
+    let mut config = test_config(&temp_home).await;
+    config.model = Some("gpt-5.1-codex".to_string());
     config.cwd = PathBuf::from("/workspace/tests");
 
     let auth_manager = test_auth_manager(&config);
@@ -671,18 +746,24 @@ fn status_snapshot_cached_limits_hide_credits_without_flag() {
             unlimited: false,
             balance: Some("80".to_string()),
         }),
+        plan_type: None,
     };
     let rate_display = rate_limit_snapshot_display(&snapshot, captured_at);
     let now = captured_at + ChronoDuration::minutes(20);
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &usage,
         Some(&usage),
         &None,
         Some(&rate_display),
+        None,
         now,
+        &model_slug,
     );
     let mut rendered_lines = render_lines(&composite.display_lines(80));
     if cfg!(windows) {
@@ -694,10 +775,10 @@ fn status_snapshot_cached_limits_hide_credits_without_flag() {
     assert_snapshot!(sanitized);
 }
 
-#[test]
-fn status_context_window_uses_last_usage() {
+#[tokio::test]
+async fn status_context_window_uses_last_usage() {
     let temp_home = TempDir::new().expect("temp home");
-    let mut config = test_config(&temp_home);
+    let mut config = test_config(&temp_home).await;
     config.model_context_window = Some(272_000);
 
     let auth_manager = test_auth_manager(&config);
@@ -721,14 +802,19 @@ fn status_context_window_uses_last_usage() {
         .single()
         .expect("timestamp");
 
+    let model_slug = ModelsManager::get_model_offline(config.model.as_deref());
+    let model_family = test_model_family(&model_slug, &config);
     let composite = new_status_output(
         &config,
         &auth_manager,
+        &model_family,
         &total_usage,
         Some(&last_usage),
         &None,
         None,
+        None,
         now,
+        &model_slug,
     );
     let rendered_lines = render_lines(&composite.display_lines(80));
     let context_line = rendered_lines

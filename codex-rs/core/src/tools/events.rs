@@ -136,7 +136,6 @@ impl ToolEmitter {
         command: &[String],
         cwd: PathBuf,
         source: ExecCommandSource,
-        interaction_input: Option<String>,
         process_id: Option<String>,
     ) -> Self {
         let parsed_cmd = parse_command(command);
@@ -144,7 +143,7 @@ impl ToolEmitter {
             command: command.to_vec(),
             cwd,
             source,
-            interaction_input,
+            interaction_input: None, // TODO(jif) drop this field in the protocol.
             parsed_cmd,
             process_id,
         }

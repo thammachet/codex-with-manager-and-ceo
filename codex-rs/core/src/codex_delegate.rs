@@ -25,6 +25,7 @@ use crate::codex::Session;
 use crate::codex::TurnContext;
 use crate::config::Config;
 use crate::error::CodexErr;
+use crate::openai_models::models_manager::ModelsManager;
 use codex_protocol::protocol::InitialHistory;
 
 /// Start an interactive sub-Codex conversation and return IO channels.
@@ -35,6 +36,7 @@ use codex_protocol::protocol::InitialHistory;
 pub(crate) async fn run_codex_conversation_interactive(
     config: Config,
     auth_manager: Arc<AuthManager>,
+    models_manager: Arc<ModelsManager>,
     parent_session: Arc<Session>,
     parent_ctx: Arc<TurnContext>,
     cancel_token: CancellationToken,
@@ -47,6 +49,8 @@ pub(crate) async fn run_codex_conversation_interactive(
     let CodexSpawnOk { codex, .. } = Codex::spawn(
         config,
         auth_manager,
+        models_manager,
+        Arc::clone(&parent_session.services.skills_manager),
         initial_history.unwrap_or(InitialHistory::New),
         SessionSource::SubAgent(sub_agent_source),
     )
@@ -93,6 +97,7 @@ pub(crate) async fn run_codex_conversation_interactive(
 pub(crate) async fn run_codex_conversation_one_shot(
     config: Config,
     auth_manager: Arc<AuthManager>,
+    models_manager: Arc<ModelsManager>,
     input: Vec<UserInput>,
     parent_session: Arc<Session>,
     parent_ctx: Arc<TurnContext>,
@@ -106,6 +111,7 @@ pub(crate) async fn run_codex_conversation_one_shot(
     let io = run_codex_conversation_interactive(
         config,
         auth_manager,
+        models_manager,
         parent_session,
         parent_ctx,
         child_cancel.clone(),
@@ -278,7 +284,7 @@ async fn handle_exec_approval(
         event.command,
         event.cwd,
         event.reason,
-        event.risk,
+        event.proposed_execpolicy_amendment,
     );
     let decision = await_approval_with_cancel(
         approval_fut,
@@ -363,7 +369,7 @@ mod tests {
             rx_event: rx_events,
         });
 
-        let (session, ctx, _rx_evt) = crate::codex::make_session_and_context_with_rx();
+        let (session, ctx, _rx_evt) = crate::codex::make_session_and_context_with_rx().await;
 
         let (tx_out, rx_out) = bounded(1);
         tx_out

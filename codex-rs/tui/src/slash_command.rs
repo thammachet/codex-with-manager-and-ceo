@@ -15,8 +15,11 @@ pub enum SlashCommand {
     Model,
     Manager,
     Approvals,
+    Experimental,
+    Skills,
     Review,
     New,
+    Resume,
     Init,
     Compact,
     Undo,
@@ -29,6 +32,7 @@ pub enum SlashCommand {
     Exit,
     Feedback,
     Rollout,
+    Ps,
     TestApproval,
 }
 
@@ -41,14 +45,18 @@ impl SlashCommand {
             SlashCommand::Init => "create an AGENTS.md file with instructions for Codex",
             SlashCommand::Compact => "summarize conversation to prevent hitting the context limit",
             SlashCommand::Review => "review my current changes and find issues",
+            SlashCommand::Resume => "resume a saved chat",
             SlashCommand::Undo => "ask Codex to undo a turn",
             SlashCommand::Quit | SlashCommand::Exit => "exit Codex",
             SlashCommand::Diff => "show git diff (including untracked files)",
             SlashCommand::Mention => "mention a file",
+            SlashCommand::Skills => "use skills to improve how Codex performs specific tasks",
             SlashCommand::Status => "show current session configuration and token usage",
+            SlashCommand::Ps => "list background terminals",
             SlashCommand::Model => "choose what model and reasoning effort to use",
             SlashCommand::Manager => "configure manager/worker orchestration",
             SlashCommand::Approvals => "choose what Codex can do without approval",
+            SlashCommand::Experimental => "toggle beta features",
             SlashCommand::Mcp => "list configured MCP tools",
             SlashCommand::Logout => "log out of Codex",
             SlashCommand::Rollout => "print the rollout file path",
@@ -66,17 +74,21 @@ impl SlashCommand {
     pub fn available_during_task(self) -> bool {
         match self {
             SlashCommand::New
+            | SlashCommand::Resume
             | SlashCommand::Init
             | SlashCommand::Compact
             | SlashCommand::Undo
             | SlashCommand::Model
             | SlashCommand::Manager
             | SlashCommand::Approvals
+            | SlashCommand::Experimental
             | SlashCommand::Review
             | SlashCommand::Logout => false,
             SlashCommand::Diff
             | SlashCommand::Mention
+            | SlashCommand::Skills
             | SlashCommand::Status
+            | SlashCommand::Ps
             | SlashCommand::Mcp
             | SlashCommand::Feedback
             | SlashCommand::Quit

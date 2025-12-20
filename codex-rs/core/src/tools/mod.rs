@@ -43,6 +43,8 @@ pub fn format_exec_output_for_model_freeform(
     truncation_policy: TruncationPolicy,
     tool_output_token_limit: Option<usize>,
 ) -> String {
+    let content = build_content_with_timeout(exec_output);
+    let total_lines = content.lines().count();
     let effective_policy = match tool_output_token_limit {
         Some(limit) => match truncation_policy {
             TruncationPolicy::Tokens(_) => TruncationPolicy::Tokens(limit),
@@ -52,40 +54,23 @@ pub fn format_exec_output_for_model_freeform(
         },
         None => truncation_policy,
     };
-    let total_lines = exec_output.aggregated_output.text.lines().count();
-    let content_len = exec_output.aggregated_output.text.len();
-    let budget_bytes = effective_policy.byte_budget();
-    let should_truncate = match effective_policy {
-        TruncationPolicy::Tokens(_) => content_len > budget_bytes,
-        TruncationPolicy::Bytes(_) => content_len > budget_bytes.saturating_mul(2),
-    };
-    let formatted_output = if should_truncate || tool_output_token_limit.is_some() {
-        truncate_text(&exec_output.aggregated_output.text, effective_policy)
-    } else {
-        exec_output.aggregated_output.text.clone()
-    };
-    let was_truncated = formatted_output != exec_output.aggregated_output.text;
+    let formatted_output = truncate_text(&content, effective_policy);
 
-    if exec_output.exit_code == 0 && !exec_output.timed_out {
-        match truncation_policy {
-            TruncationPolicy::Bytes(_) => {
-                if was_truncated || tool_output_token_limit.is_some() {
-                    format_exec_output_with_metadata(exec_output, total_lines, formatted_output)
-                } else {
-                    formatted_output
-                }
-            }
-            TruncationPolicy::Tokens(_) => {
-                if tool_output_token_limit.is_some() && was_truncated {
-                    format_exec_output_with_metadata(exec_output, total_lines, formatted_output)
-                } else {
-                    formatted_output
-                }
-            }
-        }
-    } else {
-        format_exec_output_with_metadata(exec_output, total_lines, formatted_output)
+    // round to 1 decimal place
+    let duration_seconds = ((exec_output.duration.as_secs_f32()) * 10.0).round() / 10.0;
+
+    let mut sections = Vec::new();
+
+    sections.push(format!("Exit code: {}", exec_output.exit_code));
+    sections.push(format!("Wall time: {duration_seconds} seconds"));
+    if total_lines != formatted_output.lines().count() {
+        sections.push(format!("Total output lines: {total_lines}"));
     }
+
+    sections.push("Output:".to_string());
+    sections.push(formatted_output);
+
+    sections.join("\n")
 }
 
 pub fn history_content_for_exec_output(output: &ExecToolCallOutput) -> Option<String> {
@@ -103,14 +88,23 @@ pub fn format_exec_output_str(
     exec_output: &ExecToolCallOutput,
     truncation_policy: TruncationPolicy,
 ) -> String {
-    let ExecToolCallOutput {
-        aggregated_output, ..
-    } = exec_output;
-
-    let body = format_exec_output_body(exec_output, aggregated_output.text.as_str());
+    let content = build_content_with_timeout(exec_output);
 
     // Truncate for model consumption before serialization.
-    formatted_truncate_text(&body, truncation_policy)
+    formatted_truncate_text(&content, truncation_policy)
+}
+
+/// Extracts exec output content and prepends a timeout message if the command timed out.
+fn build_content_with_timeout(exec_output: &ExecToolCallOutput) -> String {
+    if exec_output.timed_out {
+        format!(
+            "command timed out after {} milliseconds\n{}",
+            exec_output.duration.as_millis(),
+            exec_output.aggregated_output.text
+        )
+    } else {
+        exec_output.aggregated_output.text.clone()
+    }
 }
 
 pub fn format_exec_output_body(exec_output: &ExecToolCallOutput, content: &str) -> String {

@@ -1,13 +1,16 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use anyhow::Result;
+use codex_core::config::Constrained;
 use codex_core::features::Feature;
 use codex_core::protocol::ApplyPatchApprovalRequestEvent;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::ExecApprovalRequestEvent;
+use codex_core::protocol::ExecPolicyAmendment;
 use codex_core::protocol::Op;
 use codex_core::protocol::SandboxPolicy;
+use codex_core::sandboxing::SandboxPermissions;
 use codex_protocol::config_types::ReasoningSummary;
 use codex_protocol::protocol::ReviewDecision;
 use codex_protocol::user_input::UserInput;
@@ -95,14 +98,14 @@ impl ActionKind {
         test: &TestCodex,
         server: &MockServer,
         call_id: &str,
-        with_escalated_permissions: bool,
+        sandbox_permissions: SandboxPermissions,
     ) -> Result<(Value, Option<String>)> {
         match self {
             ActionKind::WriteFile { target, content } => {
                 let (path, _) = target.resolve_for_patch(test);
                 let _ = fs::remove_file(&path);
                 let command = format!("printf {content:?} > {path:?} && cat {path:?}");
-                let event = shell_event(call_id, &command, 1_000, with_escalated_permissions)?;
+                let event = shell_event(call_id, &command, 1_000, sandbox_permissions)?;
                 Ok((event, Some(command)))
             }
             ActionKind::FetchUrl {
@@ -124,11 +127,11 @@ impl ActionKind {
                 );
 
                 let command = format!("python3 -c \"{script}\"");
-                let event = shell_event(call_id, &command, 1_000, with_escalated_permissions)?;
+                let event = shell_event(call_id, &command, 5_000, sandbox_permissions)?;
                 Ok((event, Some(command)))
             }
             ActionKind::RunCommand { command } => {
-                let event = shell_event(call_id, command, 1_000, with_escalated_permissions)?;
+                let event = shell_event(call_id, command, 1_000, sandbox_permissions)?;
                 Ok((event, Some(command.to_string())))
             }
             ActionKind::RunUnifiedExecCommand {
@@ -139,7 +142,7 @@ impl ActionKind {
                     call_id,
                     command,
                     Some(1000),
-                    with_escalated_permissions,
+                    sandbox_permissions,
                     *justification,
                 )?;
                 Ok((event, Some(command.to_string())))
@@ -155,7 +158,7 @@ impl ActionKind {
                 let _ = fs::remove_file(&path);
                 let patch = build_add_file_patch(&patch_path, content);
                 let command = shell_apply_patch_command(&patch);
-                let event = shell_event(call_id, &command, 5_000, with_escalated_permissions)?;
+                let event = shell_event(call_id, &command, 5_000, sandbox_permissions)?;
                 Ok((event, Some(command)))
             }
         }
@@ -180,14 +183,14 @@ fn shell_event(
     call_id: &str,
     command: &str,
     timeout_ms: u64,
-    with_escalated_permissions: bool,
+    sandbox_permissions: SandboxPermissions,
 ) -> Result<Value> {
     let mut args = json!({
         "command": command,
         "timeout_ms": timeout_ms,
     });
-    if with_escalated_permissions {
-        args["with_escalated_permissions"] = json!(true);
+    if sandbox_permissions.requires_escalated_permissions() {
+        args["sandbox_permissions"] = json!(sandbox_permissions);
     }
     let args_str = serde_json::to_string(&args)?;
     Ok(ev_function_call(call_id, "shell_command", &args_str))
@@ -197,7 +200,7 @@ fn exec_command_event(
     call_id: &str,
     cmd: &str,
     yield_time_ms: Option<u64>,
-    with_escalated_permissions: bool,
+    sandbox_permissions: SandboxPermissions,
     justification: Option<&str>,
 ) -> Result<Value> {
     let mut args = json!({
@@ -206,8 +209,8 @@ fn exec_command_event(
     if let Some(yield_time_ms) = yield_time_ms {
         args["yield_time_ms"] = json!(yield_time_ms);
     }
-    if with_escalated_permissions {
-        args["with_escalated_permissions"] = json!(true);
+    if sandbox_permissions.requires_escalated_permissions() {
+        args["sandbox_permissions"] = json!(sandbox_permissions);
         let reason = justification.unwrap_or(DEFAULT_UNIFIED_EXEC_JUSTIFICATION);
         args["justification"] = json!(reason);
     }
@@ -462,7 +465,7 @@ struct ScenarioSpec {
     approval_policy: AskForApproval,
     sandbox_policy: SandboxPolicy,
     action: ActionKind,
-    with_escalated_permissions: bool,
+    sandbox_permissions: SandboxPermissions,
     features: Vec<Feature>,
     model_override: Option<&'static str>,
     outcome: Outcome,
@@ -633,7 +636,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_on_request.txt"),
                 content: "danger-on-request",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -650,7 +653,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_on_request_5_1.txt"),
                 content: "danger-on-request",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -667,7 +670,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/dfa/network",
                 response_body: "danger-network-ok",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -683,7 +686,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/dfa/network",
                 response_body: "danger-network-ok",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -698,7 +701,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             action: ActionKind::RunCommand {
                 command: "echo trusted-unless",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -713,7 +716,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             action: ActionKind::RunCommand {
                 command: "echo trusted-unless",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -729,7 +732,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_on_failure.txt"),
                 content: "danger-on-failure",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -746,7 +749,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_on_failure_5_1.txt"),
                 content: "danger-on-failure",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -763,7 +766,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_unless_trusted.txt"),
                 content: "danger-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -783,7 +786,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_unless_trusted_5_1.txt"),
                 content: "danger-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::ExecApproval {
@@ -803,7 +806,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_never.txt"),
                 content: "danger-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -820,7 +823,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("dfa_never_5_1.txt"),
                 content: "danger-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -837,7 +840,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_on_request.txt"),
                 content: "read-only-approval",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -857,7 +860,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_on_request_5_1.txt"),
                 content: "read-only-approval",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::ExecApproval {
@@ -876,7 +879,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             action: ActionKind::RunCommand {
                 command: "echo trusted-read-only",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -891,7 +894,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             action: ActionKind::RunCommand {
                 command: "echo trusted-read-only",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::Auto,
@@ -907,7 +910,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/ro/network-blocked",
                 response_body: "should-not-see",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::Auto,
@@ -921,7 +924,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_on_request_denied.txt"),
                 content: "should-not-write",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: None,
             outcome: Outcome::ExecApproval {
@@ -942,7 +945,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_on_failure.txt"),
                 content: "read-only-on-failure",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -963,7 +966,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_on_failure_5_1.txt"),
                 content: "read-only-on-failure",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::ExecApproval {
@@ -983,7 +986,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/ro/network-approved",
                 response_body: "read-only-network-ok",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1002,7 +1005,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/ro/network-approved",
                 response_body: "read-only-network-ok",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::ExecApproval {
@@ -1021,7 +1024,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("apply_patch_shell.txt"),
                 content: "shell-apply-patch",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::PatchApproval {
@@ -1041,7 +1044,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("apply_patch_function.txt"),
                 content: "function-apply-patch",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::Auto,
@@ -1058,7 +1061,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("apply_patch_function_danger.txt"),
                 content: "function-patch-danger",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![Feature::ApplyPatchFreeform],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::Auto,
@@ -1075,7 +1078,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("apply_patch_function_outside.txt"),
                 content: "function-patch-outside",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::PatchApproval {
@@ -1095,7 +1098,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("apply_patch_function_outside_denied.txt"),
                 content: "function-patch-outside-denied",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::PatchApproval {
@@ -1115,7 +1118,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("apply_patch_shell_outside.txt"),
                 content: "shell-patch-outside",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::PatchApproval {
@@ -1135,7 +1138,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("apply_patch_function_unless_trusted.txt"),
                 content: "function-patch-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::PatchApproval {
@@ -1155,7 +1158,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("apply_patch_function_never.txt"),
                 content: "function-patch-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1-codex"),
             outcome: Outcome::Auto,
@@ -1174,7 +1177,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_unless_trusted.txt"),
                 content: "read-only-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1194,7 +1197,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_unless_trusted_5_1.txt"),
                 content: "read-only-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5.1"),
             outcome: Outcome::ExecApproval {
@@ -1214,7 +1217,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ro_never.txt"),
                 content: "read-only-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::Auto,
@@ -1237,7 +1240,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
             action: ActionKind::RunCommand {
                 command: "echo trusted-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -1253,7 +1256,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::Workspace("ww_on_request.txt"),
                 content: "workspace-on-request",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -1270,7 +1273,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/ww/network-blocked",
                 response_body: "workspace-network-blocked",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::Auto,
@@ -1284,7 +1287,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("ww_on_request_outside.txt"),
                 content: "workspace-on-request-outside",
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1304,7 +1307,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 endpoint: "/ww/network-ok",
                 response_body: "workspace-network-ok",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -1321,7 +1324,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("ww_on_failure.txt"),
                 content: "workspace-on-failure",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1341,7 +1344,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("ww_unless_trusted.txt"),
                 content: "workspace-unless-trusted",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1361,7 +1364,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 target: TargetPath::OutsideWorkspace("ww_never.txt"),
                 content: "workspace-never",
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![],
             model_override: None,
             outcome: Outcome::Auto,
@@ -1385,7 +1388,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 command: "echo \"hello unified exec\"",
                 justification: None,
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![Feature::UnifiedExec],
             model_override: Some("gpt-5"),
             outcome: Outcome::Auto,
@@ -1403,7 +1406,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 command: "python3 -c 'print('\"'\"'escalated unified exec'\"'\"')'",
                 justification: Some(DEFAULT_UNIFIED_EXEC_JUSTIFICATION),
             },
-            with_escalated_permissions: true,
+            sandbox_permissions: SandboxPermissions::RequireEscalated,
             features: vec![Feature::UnifiedExec],
             model_override: Some("gpt-5"),
             outcome: Outcome::ExecApproval {
@@ -1422,7 +1425,7 @@ fn scenarios() -> Vec<ScenarioSpec> {
                 command: "git reset --hard",
                 justification: None,
             },
-            with_escalated_permissions: false,
+            sandbox_permissions: SandboxPermissions::UseDefault,
             features: vec![Feature::UnifiedExec],
             model_override: None,
             outcome: Outcome::ExecApproval {
@@ -1457,7 +1460,7 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
     let model = model_override.unwrap_or("gpt-5.1");
 
     let mut builder = test_codex().with_model(model).with_config(move |config| {
-        config.approval_policy = approval_policy;
+        config.approval_policy = Constrained::allow_any(approval_policy);
         config.sandbox_policy = sandbox_policy.clone();
         for feature in features {
             config.features.enable(feature);
@@ -1468,7 +1471,7 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
     let call_id = scenario.name;
     let (event, expected_command) = scenario
         .action
-        .prepare(&test, &server, call_id, scenario.with_escalated_permissions)
+        .prepare(&test, &server, call_id, scenario.sandbox_permissions)
         .await?;
 
     let _ = mount_sse_once(
@@ -1520,7 +1523,7 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
             test.codex
                 .submit(Op::ExecApproval {
                     id: "0".into(),
-                    decision: *decision,
+                    decision: decision.clone(),
                 })
                 .await?;
             wait_for_completion(&test).await;
@@ -1541,7 +1544,7 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
             test.codex
                 .submit(Op::PatchApproval {
                     id: "0".into(),
-                    decision: *decision,
+                    decision: decision.clone(),
                 })
                 .await?;
             wait_for_completion(&test).await;
@@ -1551,6 +1554,165 @@ async fn run_scenario(scenario: &ScenarioSpec) -> Result<()> {
     let output_item = results_mock.single_request().function_call_output(call_id);
     let result = parse_result(&output_item);
     scenario.expectation.verify(&test, &result)?;
+
+    Ok(())
+}
+
+#[tokio::test(flavor = "current_thread")]
+#[cfg(unix)]
+async fn approving_execpolicy_amendment_persists_policy_and_skips_future_prompts() -> Result<()> {
+    let server = start_mock_server().await;
+    let approval_policy = AskForApproval::UnlessTrusted;
+    let sandbox_policy = SandboxPolicy::ReadOnly;
+    let sandbox_policy_for_config = sandbox_policy.clone();
+    let mut builder = test_codex().with_config(move |config| {
+        config.approval_policy = Constrained::allow_any(approval_policy);
+        config.sandbox_policy = sandbox_policy_for_config;
+    });
+    let test = builder.build(&server).await?;
+    let allow_prefix_path = test.cwd.path().join("allow-prefix.txt");
+    let _ = fs::remove_file(&allow_prefix_path);
+
+    let call_id_first = "allow-prefix-first";
+    let (first_event, expected_command) = ActionKind::RunCommand {
+        command: "touch allow-prefix.txt",
+    }
+    .prepare(
+        &test,
+        &server,
+        call_id_first,
+        SandboxPermissions::UseDefault,
+    )
+    .await?;
+    let expected_command =
+        expected_command.expect("execpolicy amendment scenario should produce a shell command");
+    let expected_execpolicy_amendment =
+        ExecPolicyAmendment::new(vec!["touch".to_string(), "allow-prefix.txt".to_string()]);
+
+    let _ = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-allow-prefix-1"),
+            first_event,
+            ev_completed("resp-allow-prefix-1"),
+        ]),
+    )
+    .await;
+    let first_results = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-allow-prefix-1", "done"),
+            ev_completed("resp-allow-prefix-2"),
+        ]),
+    )
+    .await;
+
+    submit_turn(
+        &test,
+        "allow-prefix-first",
+        approval_policy,
+        sandbox_policy.clone(),
+    )
+    .await?;
+
+    let approval = expect_exec_approval(&test, expected_command.as_str()).await;
+    assert_eq!(
+        approval.proposed_execpolicy_amendment,
+        Some(expected_execpolicy_amendment.clone())
+    );
+
+    test.codex
+        .submit(Op::ExecApproval {
+            id: "0".into(),
+            decision: ReviewDecision::ApprovedExecpolicyAmendment {
+                proposed_execpolicy_amendment: expected_execpolicy_amendment.clone(),
+            },
+        })
+        .await?;
+    wait_for_completion(&test).await;
+
+    let policy_path = test.home.path().join("rules").join("default.rules");
+    let policy_contents = fs::read_to_string(&policy_path)?;
+    assert!(
+        policy_contents
+            .contains(r#"prefix_rule(pattern=["touch", "allow-prefix.txt"], decision="allow")"#),
+        "unexpected policy contents: {policy_contents}"
+    );
+
+    let first_output = parse_result(
+        &first_results
+            .single_request()
+            .function_call_output(call_id_first),
+    );
+    assert_eq!(first_output.exit_code.unwrap_or(0), 0);
+    assert!(
+        first_output.stdout.is_empty(),
+        "unexpected stdout: {}",
+        first_output.stdout
+    );
+    assert_eq!(
+        fs::read_to_string(&allow_prefix_path)?,
+        "",
+        "unexpected file contents after first run"
+    );
+
+    let call_id_second = "allow-prefix-second";
+    let (second_event, second_command) = ActionKind::RunCommand {
+        command: "touch allow-prefix.txt",
+    }
+    .prepare(
+        &test,
+        &server,
+        call_id_second,
+        SandboxPermissions::UseDefault,
+    )
+    .await?;
+    assert_eq!(second_command.as_deref(), Some(expected_command.as_str()));
+
+    let _ = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_response_created("resp-allow-prefix-3"),
+            second_event,
+            ev_completed("resp-allow-prefix-3"),
+        ]),
+    )
+    .await;
+    let second_results = mount_sse_once(
+        &server,
+        sse(vec![
+            ev_assistant_message("msg-allow-prefix-2", "done"),
+            ev_completed("resp-allow-prefix-4"),
+        ]),
+    )
+    .await;
+
+    submit_turn(
+        &test,
+        "allow-prefix-second",
+        approval_policy,
+        sandbox_policy.clone(),
+    )
+    .await?;
+
+    wait_for_completion_without_approval(&test).await;
+
+    let second_output = parse_result(
+        &second_results
+            .single_request()
+            .function_call_output(call_id_second),
+    );
+    assert_eq!(second_output.exit_code.unwrap_or(0), 0);
+    assert!(
+        second_output.stdout.is_empty(),
+        "unexpected stdout: {}",
+        second_output.stdout
+    );
+    assert_eq!(
+        fs::read_to_string(&allow_prefix_path)?,
+        "",
+        "unexpected file contents after second run"
+    );
 
     Ok(())
 }

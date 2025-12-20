@@ -5,15 +5,18 @@ use std::time::Duration;
 use anyhow::Context as _;
 use anyhow::Result;
 use codex_core::MCP_SANDBOX_STATE_CAPABILITY;
-use codex_core::MCP_SANDBOX_STATE_NOTIFICATION;
+use codex_core::MCP_SANDBOX_STATE_METHOD;
 use codex_core::SandboxState;
 use codex_core::protocol::SandboxPolicy;
+use codex_execpolicy::Policy;
 use rmcp::ErrorData as McpError;
 use rmcp::RoleServer;
 use rmcp::ServerHandler;
 use rmcp::ServiceExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
+use rmcp::model::CustomRequest;
+use rmcp::model::CustomResult;
 use rmcp::model::*;
 use rmcp::schemars;
 use rmcp::service::RequestContext;
@@ -22,12 +25,11 @@ use rmcp::tool;
 use rmcp::tool_handler;
 use rmcp::tool_router;
 use rmcp::transport::stdio;
+use serde_json::json;
 use tokio::sync::RwLock;
-use tracing::debug;
 
 use crate::posix::escalate_server::EscalateServer;
 use crate::posix::escalate_server::{self};
-use crate::posix::mcp_escalation_policy::ExecPolicy;
 use crate::posix::mcp_escalation_policy::McpEscalationPolicy;
 use crate::posix::stopwatch::Stopwatch;
 
@@ -54,7 +56,7 @@ pub struct ExecParams {
     pub login: Option<bool>,
 }
 
-#[derive(Debug, serde::Serialize, schemars::JsonSchema)]
+#[derive(Debug, serde::Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct ExecResult {
     pub exit_code: i32,
     pub output: String,
@@ -78,18 +80,25 @@ pub struct ExecTool {
     tool_router: ToolRouter<ExecTool>,
     bash_path: PathBuf,
     execve_wrapper: PathBuf,
-    policy: ExecPolicy,
+    policy: Arc<RwLock<Policy>>,
+    preserve_program_paths: bool,
     sandbox_state: Arc<RwLock<Option<SandboxState>>>,
 }
 
 #[tool_router]
 impl ExecTool {
-    pub fn new(bash_path: PathBuf, execve_wrapper: PathBuf, policy: ExecPolicy) -> Self {
+    pub fn new(
+        bash_path: PathBuf,
+        execve_wrapper: PathBuf,
+        policy: Arc<RwLock<Policy>>,
+        preserve_program_paths: bool,
+    ) -> Self {
         Self {
             tool_router: Self::tool_router(),
             bash_path,
             execve_wrapper,
             policy,
+            preserve_program_paths,
             sandbox_state: Arc::new(RwLock::new(None)),
         }
     }
@@ -121,7 +130,12 @@ impl ExecTool {
         let escalate_server = EscalateServer::new(
             self.bash_path.clone(),
             self.execve_wrapper.clone(),
-            McpEscalationPolicy::new(self.policy, context, stopwatch.clone()),
+            McpEscalationPolicy::new(
+                self.policy.clone(),
+                context,
+                stopwatch.clone(),
+                self.preserve_program_paths,
+            ),
         );
 
         let result = escalate_server
@@ -132,6 +146,13 @@ impl ExecTool {
             ExecResult::from(result),
         )?]))
     }
+}
+
+#[derive(Default)]
+pub struct CodexSandboxStateUpdateMethod;
+
+impl rmcp::model::ConstString for CodexSandboxStateUpdateMethod {
+    const VALUE: &'static str = MCP_SANDBOX_STATE_METHOD;
 }
 
 #[tool_handler]
@@ -169,38 +190,43 @@ impl ServerHandler for ExecTool {
         Ok(self.get_info())
     }
 
-    async fn on_custom_notification(
+    async fn on_custom_request(
         &self,
-        notification: rmcp::model::CustomClientNotification,
-        _context: rmcp::service::NotificationContext<rmcp::RoleServer>,
-    ) {
-        let rmcp::model::CustomClientNotification { method, params, .. } = notification;
-        if method == MCP_SANDBOX_STATE_NOTIFICATION
-            && let Some(params) = params
-        {
-            match serde_json::from_value::<SandboxState>(params) {
-                Ok(sandbox_state) => {
-                    debug!(
-                        ?sandbox_state.sandbox_policy,
-                        "received sandbox state notification"
-                    );
-                    let mut state = self.sandbox_state.write().await;
-                    *state = Some(sandbox_state);
-                }
-                Err(err) => {
-                    tracing::warn!(?err, "failed to deserialize sandbox state notification");
-                }
-            }
+        request: CustomRequest,
+        _context: rmcp::service::RequestContext<rmcp::RoleServer>,
+    ) -> Result<CustomResult, McpError> {
+        let CustomRequest { method, params, .. } = request;
+        if method != MCP_SANDBOX_STATE_METHOD {
+            return Err(McpError::method_not_found::<CodexSandboxStateUpdateMethod>());
         }
+
+        let Some(params) = params else {
+            return Err(McpError::invalid_params(
+                "missing params for sandbox state request".to_string(),
+                None,
+            ));
+        };
+
+        let Ok(sandbox_state) = serde_json::from_value::<SandboxState>(params.clone()) else {
+            return Err(McpError::invalid_params(
+                "failed to deserialize sandbox state".to_string(),
+                Some(params),
+            ));
+        };
+
+        *self.sandbox_state.write().await = Some(sandbox_state);
+
+        Ok(CustomResult::new(json!({})))
     }
 }
 
 pub(crate) async fn serve(
     bash_path: PathBuf,
     execve_wrapper: PathBuf,
-    policy: ExecPolicy,
+    policy: Arc<RwLock<Policy>>,
+    preserve_program_paths: bool,
 ) -> Result<RunningService<RoleServer, ExecTool>, rmcp::service::ServerInitializeError> {
-    let tool = ExecTool::new(bash_path, execve_wrapper, policy);
+    let tool = ExecTool::new(bash_path, execve_wrapper, policy, preserve_program_paths);
     tool.serve(stdio()).await
 }
 
