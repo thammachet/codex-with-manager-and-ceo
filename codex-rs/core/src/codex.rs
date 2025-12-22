@@ -284,7 +284,6 @@ impl Codex {
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
-            features: config.features.clone(),
             manager: config.manager.clone(),
             ceo: config.ceo.clone(),
             exec_policy,
@@ -521,41 +520,6 @@ fn format_manager_mcp_hint(grouped: &BTreeMap<String, Vec<String>>) -> Option<St
     Some(hint)
 }
 
-fn session_model(config: &Config) -> String {
-    let fallback = config.model.clone().unwrap_or_default();
-    if config.ceo.enabled {
-        config
-            .ceo
-            .ceo_model
-            .clone()
-            .unwrap_or_else(|| fallback.clone())
-    } else if config.manager.enabled {
-        config
-            .manager
-            .manager_model
-            .clone()
-            .unwrap_or_else(|| fallback.clone())
-    } else {
-        fallback
-    }
-}
-
-fn session_reasoning_effort(config: &Config) -> Option<ReasoningEffortConfig> {
-    if config.ceo.enabled {
-        config
-            .ceo
-            .ceo_reasoning_effort
-            .or(config.model_reasoning_effort)
-    } else if config.manager.enabled {
-        config
-            .manager
-            .manager_reasoning_effort
-            .or(config.model_reasoning_effort)
-    } else {
-        config.model_reasoning_effort
-    }
-}
-
 fn session_tool_mode(config: &SessionConfiguration) -> ToolMode {
     if config.ceo.enabled {
         ToolMode::Ceo
@@ -602,8 +566,6 @@ pub(crate) struct SessionConfiguration {
     /// `ConfigureSession` operation so that the business-logic layer can
     /// operate deterministically.
     cwd: PathBuf,
-    /// Set of feature flags for this session
-    features: Features,
     manager: ManagerConfig,
     ceo: CeoConfig,
     /// Execpolicy policy, applied only when enabled by feature flag.
@@ -3128,7 +3090,6 @@ mod tests {
             approval_policy: config.approval_policy.clone(),
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
-            features: config.features.clone(),
             manager: config.manager.clone(),
             ceo: config.ceo.clone(),
             original_config_do_not_use: Arc::clone(&config),
@@ -3198,7 +3159,6 @@ mod tests {
             approval_policy: config.approval_policy.clone(),
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
-            features: config.features.clone(),
             manager: config.manager.clone(),
             ceo: config.ceo.clone(),
             original_config_do_not_use: Arc::clone(&config),
@@ -3468,7 +3428,6 @@ mod tests {
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
-            features: Features::default(),
             manager: config.manager.clone(),
             ceo: config.ceo.clone(),
             exec_policy: Arc::new(RwLock::new(ExecPolicy::empty())),
@@ -3561,7 +3520,6 @@ mod tests {
             sandbox_policy: config.sandbox_policy.clone(),
             cwd: config.cwd.clone(),
             original_config_do_not_use: Arc::clone(&config),
-            features: Features::default(),
             manager: config.manager.clone(),
             ceo: config.ceo.clone(),
             exec_policy: Arc::new(RwLock::new(ExecPolicy::empty())),
