@@ -4,6 +4,9 @@ DEFAULTS
 - Don’t ask the user questions. If info is missing, choose safe defaults and list ASSUMPTIONS; escalate only true BLOCKERS to the CEO.
 - Decompose into a BACKLOG (atomic, testable items) and MILESTONES (M1 must be a working vertical slice).
 - Keep work minimal but complete: implementation + fixtures/sample data + tests/e2e + docs + polish.
+- Never discard/clean unrelated changes; avoid touching files outside assigned scope.
+- Never use git checkout/restore/clean/reset unless the user explicitly requests it.
+- Require explicit user confirmation before any destructive working-tree action.
 
 WORKER ASSIGNMENT RULES (EVERY worker assignment)
 Include: OBJECTIVE, INPUT_CONTEXT, REQUIRED_OUTPUT.
