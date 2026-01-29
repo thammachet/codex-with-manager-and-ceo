@@ -38,6 +38,13 @@ const FIXTURE_JSON: &str = r#"{
 }
 "#;
 
+fn extract_shell_command_body(output: &str) -> &str {
+    output
+        .split_once("\nOutput:\n")
+        .map(|(_, body)| body)
+        .unwrap_or("")
+}
+
 fn shell_responses(
     call_id: &str,
     command: Vec<&str>,
@@ -181,6 +188,11 @@ async fn shell_output_is_structured_with_freeform_apply_patch(
         .and_then(Value::as_str)
         .expect("structured output string");
 
+    let output = if output_type == ShellModelOutput::ShellCommand {
+        extract_shell_command_body(output)
+    } else {
+        output
+    };
     assert_eq!(output, "freeform shell\n");
 
     Ok(())
@@ -268,6 +280,11 @@ async fn shell_output_structures_fixture_with_serialization(
         .and_then(Value::as_str)
         .expect("structured output string");
 
+    let output = if output_type == ShellModelOutput::ShellCommand {
+        extract_shell_command_body(output)
+    } else {
+        output
+    };
     assert_eq!(output, FIXTURE_JSON, "expected fixture contents");
 
     Ok(())
@@ -305,6 +322,11 @@ async fn shell_output_for_freeform_tool_records_duration(
         .and_then(Value::as_str)
         .expect("structured output string");
 
+    let output = if output_type == ShellModelOutput::ShellCommand {
+        extract_shell_command_body(output)
+    } else {
+        output
+    };
     assert!(
         output.is_empty(),
         "sleep should not produce stdout but found: {output:?}"
@@ -711,7 +733,7 @@ async fn shell_command_output_is_freeform() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    assert_eq!(output, "shell command\n");
+    assert_eq!(extract_shell_command_body(output), "shell command\n");
 
     Ok(())
 }
@@ -757,13 +779,13 @@ async fn shell_command_output_is_not_truncated_under_10k_bytes() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    assert_eq!(output, "1".repeat(10_000));
+    assert_eq!(extract_shell_command_body(output), "1".repeat(10_000));
 
     Ok(())
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn shell_command_output_is_not_truncated_over_10k_bytes() -> Result<()> {
+async fn shell_command_output_is_truncated_over_10k_bytes() -> Result<()> {
     skip_if_no_network!(Ok(()));
 
     let server = start_mock_server().await;
@@ -803,7 +825,11 @@ async fn shell_command_output_is_not_truncated_over_10k_bytes() -> Result<()> {
         .and_then(Value::as_str)
         .expect("shell_command output string");
 
-    assert_eq!(output, "1".repeat(10_001));
+    let body = extract_shell_command_body(output);
+    assert!(
+        body.contains("chars truncated"),
+        "expected 10k output boundary to truncate with marker, got: {body}"
+    );
 
     Ok(())
 }

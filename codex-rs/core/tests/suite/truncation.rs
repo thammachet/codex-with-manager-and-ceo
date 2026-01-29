@@ -301,16 +301,27 @@ async fn tool_call_output_exceeds_limit_truncated_for_model() -> Result<()> {
         serde_json::from_str::<Value>(&output).is_err(),
         "expected truncated shell output to be plain text"
     );
+
+    assert_eq!(
+        output.matches("Total output lines:").count(),
+        1,
+        "expected a single truncation header: {output}"
+    );
+
+    let body = output
+        .split_once("\nOutput:\n")
+        .map(|(_, body)| body)
+        .unwrap_or(output.as_str());
     assert!(
-        output.starts_with("1\n2\n3\n4\n5\n6\n"),
+        body.starts_with("1\n2\n3\n4\n5\n6\n"),
         "truncated output should start with initial lines: {output}"
     );
     assert!(
-        output.contains("\n99999\n100000\n"),
+        body.contains("\n99999\n100000\n"),
         "truncated output should retain tail lines: {output}"
     );
     assert_eq!(
-        output.matches("tokens truncated").count(),
+        body.matches("tokens truncated").count(),
         1,
         "expected a single token truncation marker: {output}"
     );
