@@ -4,6 +4,7 @@ use std::sync::atomic::AtomicU64;
 use async_channel::Receiver;
 use async_channel::Sender;
 use codex_async_utils::OrCancelExt;
+use codex_protocol::approvals::ElicitationRequestEvent;
 use codex_protocol::protocol::ApplyPatchApprovalRequestEvent;
 use codex_protocol::protocol::Event;
 use codex_protocol::protocol::EventMsg;
@@ -13,9 +14,12 @@ use codex_protocol::protocol::SessionSource;
 use codex_protocol::protocol::SubAgentSource;
 use codex_protocol::protocol::Submission;
 use codex_protocol::user_input::UserInput;
+use mcp_types::RequestId;
 use std::time::Duration;
+use tokio::sync::oneshot;
 use tokio::time::timeout;
 use tokio_util::sync::CancellationToken;
+use uuid::Uuid;
 
 use crate::AuthManager;
 use crate::codex::Codex;
@@ -220,6 +224,19 @@ async fn forward_events(
                         )
                         .await;
                     }
+                    Event {
+                        id: _,
+                        msg: EventMsg::ElicitationRequest(event),
+                    } => {
+                        handle_elicitation_request(
+                            &codex,
+                            &parent_session,
+                            &parent_ctx,
+                            event,
+                            &cancel_token,
+                        )
+                        .await;
+                    }
                     other => {
                         match tx_sub.send(other).or_cancel(&cancel_token).await {
                             Ok(Ok(())) => {}
@@ -325,6 +342,46 @@ async fn handle_patch_approval(
     let _ = codex.submit(Op::PatchApproval { id, decision }).await;
 }
 
+/// Handle an MCP elicitation request by consulting the parent session and replying.
+async fn handle_elicitation_request(
+    codex: &Codex,
+    parent_session: &Session,
+    parent_ctx: &TurnContext,
+    event: ElicitationRequestEvent,
+    cancel_token: &CancellationToken,
+) {
+    let token = format!("delegate_elicitation_{}", Uuid::new_v4());
+
+    let original_server_name = event.server_name;
+    let original_request_id = event.id;
+    let message = event.message;
+
+    let decision_rx = parent_session
+        .register_delegated_elicitation(token.clone(), original_server_name.clone())
+        .await;
+
+    parent_session
+        .send_event(
+            parent_ctx,
+            EventMsg::ElicitationRequest(ElicitationRequestEvent {
+                server_name: original_server_name.clone(),
+                id: RequestId::String(token.clone()),
+                message,
+            }),
+        )
+        .await;
+
+    let decision =
+        await_elicitation_with_cancel(decision_rx, parent_session, &token, cancel_token).await;
+    let _ = codex
+        .submit(Op::ResolveElicitation {
+            server_name: original_server_name,
+            request_id: original_request_id,
+            decision,
+        })
+        .await;
+}
+
 /// Await an approval decision, aborting on cancellation.
 async fn await_approval_with_cancel<F>(
     fut: F,
@@ -345,6 +402,24 @@ where
         }
         decision = fut => {
             decision
+        }
+    }
+}
+
+async fn await_elicitation_with_cancel(
+    rx: oneshot::Receiver<codex_protocol::approvals::ElicitationAction>,
+    parent_session: &Session,
+    token: &str,
+    cancel_token: &CancellationToken,
+) -> codex_protocol::approvals::ElicitationAction {
+    tokio::select! {
+        biased;
+        _ = cancel_token.cancelled() => {
+            parent_session.remove_delegated_elicitation(token).await;
+            codex_protocol::approvals::ElicitationAction::Cancel
+        }
+        decision = rx => {
+            decision.unwrap_or(codex_protocol::approvals::ElicitationAction::Cancel)
         }
     }
 }

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::AuthManager;
@@ -9,9 +10,16 @@ use crate::tools::sandboxing::ApprovalStore;
 use crate::unified_exec::UnifiedExecSessionManager;
 use crate::user_notification::UserNotifier;
 use codex_otel::otel_manager::OtelManager;
+use codex_protocol::approvals::ElicitationAction;
 use tokio::sync::Mutex;
 use tokio::sync::RwLock;
+use tokio::sync::oneshot;
 use tokio_util::sync::CancellationToken;
+
+pub(crate) struct DelegatedElicitation {
+    pub(crate) server_name: String,
+    pub(crate) tx: oneshot::Sender<ElicitationAction>,
+}
 
 pub(crate) struct SessionServices {
     pub(crate) mcp_connection_manager: Arc<RwLock<McpConnectionManager>>,
@@ -26,4 +34,5 @@ pub(crate) struct SessionServices {
     pub(crate) otel_manager: OtelManager,
     pub(crate) tool_approvals: Mutex<ApprovalStore>,
     pub(crate) skills_manager: Arc<SkillsManager>,
+    pub(crate) delegated_elicitations: Mutex<HashMap<String, DelegatedElicitation>>,
 }

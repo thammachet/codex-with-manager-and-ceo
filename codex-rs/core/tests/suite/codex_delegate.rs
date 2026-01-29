@@ -1,4 +1,7 @@
 use codex_core::config::Constrained;
+use codex_core::config::types::McpServerConfig;
+use codex_core::config::types::McpServerTransportConfig;
+use codex_core::features::Feature;
 use codex_core::protocol::AskForApproval;
 use codex_core::protocol::EventMsg;
 use codex_core::protocol::Op;
@@ -20,7 +23,9 @@ use core_test_support::responses::start_mock_server;
 use core_test_support::skip_if_no_network;
 use core_test_support::test_codex::test_codex;
 use core_test_support::wait_for_event;
+use escargot::CargoBuild;
 use pretty_assertions::assert_eq;
+use std::time::Duration;
 
 /// Delegate should surface ExecApprovalRequest from sub-agent and proceed
 /// after parent submits an approval decision.
@@ -231,4 +236,109 @@ async fn codex_delegate_ignores_legacy_deltas() {
         legacy_reasoning_delta_count, 1,
         "expected one legacy reasoning delta"
     );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn codex_delegate_forwards_mcp_elicitation_to_parent() -> anyhow::Result<()> {
+    skip_if_no_network!(Ok(()));
+
+    let server = start_mock_server().await;
+
+    let call_id = "call-mcp-1";
+    let server_name = "rmcp";
+    let tool_name = format!("mcp__{server_name}__needs_approval");
+
+    let sse1 = sse(vec![
+        ev_response_created("resp-1"),
+        ev_function_call(call_id, &tool_name, "{}"),
+        ev_completed("resp-1"),
+    ]);
+    let review_json = serde_json::json!({
+        "findings": [],
+        "overall_correctness": "ok",
+        "overall_explanation": "delegate mcp elicitation handled",
+        "overall_confidence_score": 0.5
+    })
+    .to_string();
+    let sse2 = sse(vec![
+        ev_response_created("resp-2"),
+        ev_assistant_message("msg-1", &review_json),
+        ev_completed("resp-2"),
+    ]);
+    mount_sse_sequence(&server, vec![sse1, sse2]).await;
+
+    let rmcp_test_server_bin = CargoBuild::new()
+        .package("codex-rmcp-client")
+        .bin("test_elicitation_server")
+        .run()?
+        .path()
+        .to_string_lossy()
+        .into_owned();
+
+    let mut builder = test_codex()
+        .with_model("gpt-5.1")
+        .with_config(move |config| {
+            config.features.enable(Feature::RmcpClient);
+            config.mcp_servers.insert(
+                server_name.to_string(),
+                McpServerConfig {
+                    transport: McpServerTransportConfig::Stdio {
+                        command: rmcp_test_server_bin,
+                        args: Vec::new(),
+                        env: None,
+                        env_vars: Vec::new(),
+                        cwd: None,
+                    },
+                    enabled: true,
+                    startup_timeout_sec: Some(Duration::from_secs(10)),
+                    tool_timeout_sec: None,
+                    enabled_tools: None,
+                    disabled_tools: None,
+                },
+            );
+        });
+    let test = builder.build(&server).await.expect("build test codex");
+
+    test.codex
+        .submit(Op::Review {
+            review_request: ReviewRequest {
+                target: ReviewTarget::Custom {
+                    instructions: "Please review".to_string(),
+                },
+                user_facing_hint: None,
+            },
+        })
+        .await
+        .expect("submit review");
+
+    wait_for_event(&test.codex, |ev| {
+        matches!(ev, EventMsg::EnteredReviewMode(_))
+    })
+    .await;
+
+    let event = wait_for_event(&test.codex, |ev| {
+        matches!(ev, EventMsg::ElicitationRequest(_))
+    })
+    .await;
+    let EventMsg::ElicitationRequest(req) = event else {
+        unreachable!("event guard guarantees ElicitationRequest");
+    };
+
+    test.codex
+        .submit(Op::ResolveElicitation {
+            server_name: req.server_name,
+            request_id: req.id,
+            decision: codex_protocol::approvals::ElicitationAction::Accept,
+        })
+        .await
+        .expect("submit elicitation decision");
+
+    wait_for_event(&test.codex, |ev| {
+        matches!(ev, EventMsg::ExitedReviewMode(_))
+    })
+    .await;
+    wait_for_event(&test.codex, |ev| matches!(ev, EventMsg::TaskComplete(_))).await;
+
+    server.verify().await;
+    Ok(())
 }

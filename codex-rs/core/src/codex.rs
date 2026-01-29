@@ -138,6 +138,7 @@ use crate::skills::SkillMetadata;
 use crate::skills::SkillsManager;
 use crate::skills::build_skill_injections;
 use crate::state::ActiveTurn;
+use crate::state::DelegatedElicitation;
 use crate::state::SessionServices;
 use crate::state::SessionState;
 use crate::tasks::GhostSnapshotTask;
@@ -815,6 +816,7 @@ impl Session {
             models_manager: Arc::clone(&models_manager),
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            delegated_elicitations: Mutex::new(HashMap::new()),
         };
 
         let sess = Arc::new(Session {
@@ -1408,6 +1410,43 @@ impl Session {
             .await
             .resolve_elicitation(server_name, id, response)
             .await
+    }
+
+    pub(crate) async fn register_delegated_elicitation(
+        &self,
+        token: String,
+        server_name: String,
+    ) -> oneshot::Receiver<codex_protocol::approvals::ElicitationAction> {
+        let (tx, rx) = oneshot::channel();
+        let prev = self
+            .services
+            .delegated_elicitations
+            .lock()
+            .await
+            .insert(token.clone(), DelegatedElicitation { server_name, tx });
+        if prev.is_some() {
+            warn!("overwriting existing delegated elicitation entry for token: {token}");
+        }
+        rx
+    }
+
+    pub(crate) async fn remove_delegated_elicitation(&self, token: &str) {
+        self.services
+            .delegated_elicitations
+            .lock()
+            .await
+            .remove(token);
+    }
+
+    pub(crate) async fn take_delegated_elicitation(
+        &self,
+        token: &str,
+    ) -> Option<DelegatedElicitation> {
+        self.services
+            .delegated_elicitations
+            .lock()
+            .await
+            .remove(token)
     }
 
     /// Records input items: always append to conversation history and
@@ -2065,6 +2104,23 @@ mod handlers {
         request_id: RequestId,
         decision: codex_protocol::approvals::ElicitationAction,
     ) {
+        if let RequestId::String(token) = &request_id
+            && let Some(pending) = sess.take_delegated_elicitation(token).await
+        {
+            if pending.server_name != server_name {
+                warn!(
+                    token = %token,
+                    expected_server = %pending.server_name,
+                    got_server = %server_name,
+                    "delegated elicitation server mismatch"
+                );
+            }
+            if pending.tx.send(decision).is_err() {
+                warn!("failed to forward delegated elicitation decision: token={token}");
+            }
+            return;
+        }
+
         let action = match decision {
             codex_protocol::approvals::ElicitationAction::Accept => ElicitationAction::Accept,
             codex_protocol::approvals::ElicitationAction::Decline => ElicitationAction::Decline,
@@ -3461,6 +3517,7 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            delegated_elicitations: Mutex::new(HashMap::new()),
         };
 
         let turn_context = Session::make_turn_context(
@@ -3553,6 +3610,7 @@ mod tests {
             models_manager,
             tool_approvals: Mutex::new(ApprovalStore::default()),
             skills_manager,
+            delegated_elicitations: Mutex::new(HashMap::new()),
         };
 
         let turn_context = Arc::new(Session::make_turn_context(
